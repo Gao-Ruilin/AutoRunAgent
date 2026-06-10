@@ -420,6 +420,48 @@ a:hover{color:var(--accent-hover)}
 .chat-area{display:flex;flex:1;flex-direction:column;min-height:0}
 .chat-area.hidden{display:none}
 
+/* ── Queue Area (stacked queued messages at bottom) ── */
+#queueStack{position:sticky;bottom:0;z-index:5;display:flex;flex-direction:column-reverse;margin-top:auto}
+#queueStack:empty{display:none}
+.queue-item{background:var(--bg-tertiary);border:1px solid var(--border-light);border-radius:var(--radius);padding:6px 10px;cursor:pointer;transition:all var(--transition);position:relative;margin-bottom:-24px;overflow:hidden;max-height:32px;opacity:0.85}
+.queue-item:last-child{margin-bottom:0}
+.queue-item:hover{max-height:200px;opacity:1;z-index:10;box-shadow:var(--shadow);border-color:var(--accent);margin-bottom:0!important}
+.queue-item .qi-preview{font-size:11px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.queue-item:hover .qi-preview{white-space:normal}
+.queue-item .qi-label{font-size:9px;color:var(--text-dim);display:flex;align-items:center;gap:4px;margin-top:2px}
+.queue-item .qi-dot{width:5px;height:5px;border-radius:50%;background:var(--orange);display:inline-block;flex-shrink:0;transition:background var(--transition)}
+.queue-item .qi-dot.active{background:var(--green);animation:qi-pulse 1s infinite}
+.queue-item .qi-pos{font-size:9px;color:var(--text-dim);margin-left:auto}
+.queue-item.processing{border-color:var(--accent);animation:qi-processing-glow 1.5s ease-in-out infinite}
+.queue-item.processing .qi-dot{background:var(--accent);animation:qi-pulse 1s infinite}
+.queue-item .qi-actions{display:none;gap:4px;margin-top:4px}
+.queue-item:hover .qi-actions{display:flex}
+.queue-item .qi-btn{padding:2px 8px;border-radius:3px;font-size:10px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-secondary);cursor:pointer;transition:all var(--transition)}
+.queue-item .qi-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+.queue-item .qi-btn.danger:hover{background:rgba(229,85,85,0.15);color:var(--red);border-color:rgba(229,85,85,0.3)}
+@keyframes qi-processing-glow{0%,100%{box-shadow:0 0 0 rgba(108,140,255,0)}50%{box-shadow:0 0 8px rgba(108,140,255,0.3)}}
+@keyframes qi-pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* ── Queue Editor Overlay ── */
+#queue-editor-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center}
+#queue-editor-overlay.show{display:flex}
+.queue-editor-dialog{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;width:520px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.5)}
+.queue-editor-dialog textarea{width:100%;min-height:80px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);padding:10px;font-family:var(--font-sans);font-size:13px;resize:vertical}
+.queue-editor-dialog textarea:focus{outline:none;border-color:var(--accent)}
+.queue-editor-actions{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
+.queue-editor-actions button{padding:6px 16px;border-radius:var(--radius);font-size:12px;font-weight:500;border:1px solid var(--border);cursor:pointer;transition:all var(--transition)}
+.queue-editor-actions .qe-save{background:var(--accent);color:#fff;border-color:var(--accent)}
+.queue-editor-actions .qe-save:hover{background:var(--accent-hover)}
+.queue-editor-actions .qe-cancel{background:transparent;color:var(--text-secondary)}
+.queue-editor-actions .qe-cancel:hover{background:var(--bg-hover);color:var(--text-primary)}
+.queue-editor-actions .qe-delete{background:transparent;color:var(--red);border-color:rgba(229,85,85,0.3);margin-right:auto}
+.queue-editor-actions .qe-delete:hover{background:rgba(229,85,85,0.15)}
+
+@media (max-width:768px){
+  #queue-area{padding:0 12px}
+  .queue-editor-dialog{width:95vw}
+}
+
 /* ── KaTeX overrides for dark theme ── */
 .msg-content .katex{font-size:1.1em}
 .msg-content .katex-display{overflow-x:auto;overflow-y:hidden;margin:0.8em 0;padding:0.2em 0}
@@ -669,7 +711,24 @@ a:hover{color:var(--accent-hover)}
         </div>
       </div>
 
-      <!-- Task Panel (Cursor-style) -->
+      <!-- Queue Area (stacked queued messages) -->
+      <div class="queue-stack" id="queueStack"></div>
+    </div>
+
+    <!-- Queue Editor Overlay -->
+    <div id="queue-editor-overlay">
+      <div class="queue-editor-dialog">
+        <div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:8px">编辑排队消息</div>
+        <textarea id="queueEditorInput" placeholder="修改消息内容..."></textarea>
+        <div class="queue-editor-actions">
+          <button class="qe-delete" onclick="deleteQueueItem()">删除</button>
+          <button class="qe-cancel" onclick="closeQueueEditor(false)">取消</button>
+          <button class="qe-save" onclick="closeQueueEditor(true)">保存并重新排队</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Task Panel (Cursor-style) -->
       <div class="task-panel" id="taskPanel">
         <div class="task-panel-inner" id="taskPanelInner"></div>
       </div>
@@ -1221,6 +1280,8 @@ let messageCount=0;
 let _lastReadCard=null;      // last Read tool card for merging
 let _lastReadFiles=[];       // accumulated file paths for current Read batch
 let _agentPref=localStorage.getItem('autorun_agent_pref')!=='false';
+let _queueItems=[];
+let _editingQueueId=null;
 
 function initAgentPref(){
   const cb=document.getElementById('sbAgentPref');
@@ -1480,12 +1541,6 @@ function handleMessage(msg){
         // Final completion signal after all processing (main or queued chain)
         generating=false;
         updateSendUI();
-        // Clean up any remaining queued indicators (shouldn't be any, but just in case)
-        document.querySelectorAll('.msg.user.queued').forEach(function(el){
-          el.style.opacity='1';el.style.border='1px solid transparent';
-          var qlabel=el.querySelector('.q-label');
-          if(qlabel)qlabel.style.display='none';
-        });
         if(!msg.queued_message_id && !msg.has_pending_queued){
           messageCount++;
           updateMsgCount();
@@ -1496,12 +1551,6 @@ function handleMessage(msg){
         updateSendUI();
         messageCount++;
         updateMsgCount();
-        // Clean up any queued message indicators
-        document.querySelectorAll('.msg.user.queued').forEach(function(el){
-          el.style.opacity='1';el.style.border='1px solid transparent';
-          var qlabel=el.querySelector('.q-label');
-          if(qlabel)qlabel.style.display='none';
-        });
       }
       if(msg.skill_changed){
         addRestartButton();
@@ -1585,28 +1634,27 @@ function handleMessage(msg){
       }
       break;
     case 'queued':
-      // Backend confirmed message queued — update position on the specific bubble
-      var qEl=document.querySelector('.msg.user.queued[data-msgid="'+msg.message_id+'"]');
-      if(qEl){
-        var dot=qEl.querySelector('.q-dot');
-        if(dot)dot.style.background='var(--green)';
-        var qText=qEl.querySelector('.q-text');
-        if(qText)qText.textContent=t('messageQueued')+' ('+t('queuePos')+': '+msg.position+')';
+      // Backend confirmed message queued — queue item already created by addQueuedMsg
+      // Server may send updated position
+      if(msg.position&&_queueItems.length>0){
+        renderQueueStack();
       }
       break;
     case 'queued_processing':
-      // Backend is now processing a specific queued message — convert its bubble to a normal user message
+      // Backend is now processing a specific queued message — animate it out
       generating=true;
       updateSendUI();
       removeWelcomeIfNeeded();
-      // Convert the specific queued bubble to a normal user message
-      var qEl=document.querySelector('.msg.user.queued[data-msgid="'+msg.message_id+'"]');
-      if(qEl){
-        convertQueuedToNormal(qEl);
+      if(msg.message_id){
+        markQueueProcessing(msg.message_id);
+        // Animate removal
+        setTimeout(function(){convertQueueToNormal(msg.message_id);},500);
       }
-      // Update positions on remaining queued messages
-      updateAllQueuePositions();
-      // Close previous assistant bubble and create a fresh one for the queued response
+      // Add the message text as a normal user message in the main area
+      if(msg.message_text){
+        addUserMsg(msg.message_text);
+      }
+      // Close previous assistant bubble and create a fresh one
       if(currentAssistantMsgEl){
         finishAssistantMsg(currentAssistantMsgEl);
       }
@@ -1614,15 +1662,8 @@ function handleMessage(msg){
       currentAssistantText='';
       break;
     case 'queue_update':
-      // Server sent updated queue positions — update all queued bubbles
-      if(msg.positions){
-        msg.positions.forEach(function(p){
-          var el=document.querySelector('.msg.user.queued[data-msgid="'+p.message_id+'"]');
-          if(el){
-            updateQueuePosition(el,p.position);
-          }
-        });
-      }
+      // Server sent updated queue positions — re-render stack
+      renderQueueStack();
       break;
     case 'conversation_loaded':
       sessionId=msg.session_id;
@@ -2113,47 +2154,116 @@ function sendUserMessage(text){
 }
 
 function addQueuedMsg(text,msgId,pos){
-  removeWelcomeIfNeeded();
-  var inner=getOrCreateMsgContainer();
-  var div=document.createElement('div');
-  div.className='msg user queued';
-  div.setAttribute('data-msgid',msgId||'');
-  div.style.opacity='0.55';
-  div.style.border='1px dashed var(--border)';
-  var posText=pos>0?(' ('+t('queuePos')+': '+pos+')'):'';
-  div.innerHTML='<div class="msg-content">'+renderMarkdown(text)+'</div>'+
-    '<div class="q-label" style="font-size:10px;color:var(--text-dim);margin-top:4px;display:flex;align-items:center;gap:4px">'+
-      '<span class="q-dot" style="width:6px;height:6px;border-radius:50%;background:var(--orange);display:inline-block"></span>'+
-      '<span class="q-text">'+t('messageQueued')+posText+'</span>'+
+  // Add to queue data, render stacked display
+  var entry={msgId:msgId,text:text,createdAt:Date.now()};
+  // Remove duplicate if exists
+  _queueItems=_queueItems.filter(function(q){return q.msgId!==msgId;});
+  _queueItems.push(entry);
+  renderQueueStack();
+}
+
+function renderQueueStack(){
+  var stack=document.getElementById('queueStack');
+  if(!stack)return;
+  if(_queueItems.length===0){stack.innerHTML='';return;}
+  var html='';
+  for(var i=_queueItems.length-1;i>=0;i--){
+    var q=_queueItems[i];
+    var preview=q.text.replace(/\n/g,' ').substring(0,80);
+    if(q.text.length>80)preview+='...';
+    html+='<div class="queue-item" data-msgid="'+escapeHtmlAttr(q.msgId)+'" onclick="openQueueEditor(\''+escapeHtmlAttr(q.msgId)+'\')" title="点击编辑或查看">'+
+      '<div class="qi-preview">'+escapeHtml(preview)+'</div>'+
+      '<div class="qi-label">'+
+        '<span class="qi-dot"></span>'+
+        '<span>'+t('messageQueued')+' #'+(i+1)+'</span>'+
+        '<span class="qi-pos">'+t('queuePos')+': '+(i+1)+'</span>'+
+      '</div>'+
+      '<div class="qi-actions" onclick="event.stopPropagation()">'+
+        '<button class="qi-btn" onclick="openQueueEditor(\''+escapeHtmlAttr(q.msgId)+'\')">编辑</button>'+
+        '<button class="qi-btn danger" onclick="deleteQueueItem(\''+escapeHtmlAttr(q.msgId)+'\')">删除</button>'+
+      '</div>'+
     '</div>';
-  inner.appendChild(div);
-}
-
-function convertQueuedToNormal(el){
-  // Convert a queued message bubble to a normal user message (remove queue indicators)
-  el.classList.remove('queued');
-  el.style.opacity='1';
-  el.style.border='1px solid transparent';
-  var qlabel=el.querySelector('.q-label');
-  if(qlabel)qlabel.style.display='none';
-}
-
-function updateQueuePosition(el,pos){
-  // Update the queue position indicator on a queued bubble
-  var qText=el.querySelector('.q-text');
-  if(qText){
-    qText.textContent=t('messageQueued')+' ('+t('queuePos')+': '+pos+')';
   }
-  var dot=el.querySelector('.q-dot');
-  if(dot)dot.style.background='var(--green)';
+  stack.innerHTML=html;
 }
 
-function updateAllQueuePositions(){
-  // Re-number all visible queued bubbles based on DOM order
-  var allQueued=document.querySelectorAll('.msg.user.queued');
-  allQueued.forEach(function(el,i){
-    updateQueuePosition(el,i+1);
-  });
+function markQueueProcessing(msgId){
+  // Highlight a queue item as being processed
+  var el=document.querySelector('#queueStack .queue-item[data-msgid="'+msgId+'"]');
+  if(el){
+    el.classList.add('processing');
+    var dot=el.querySelector('.qi-dot');
+    if(dot)dot.classList.add('active');
+  }
+}
+
+function removeQueueItem(msgId){
+  _queueItems=_queueItems.filter(function(q){return q.msgId!==msgId;});
+  renderQueueStack();
+}
+
+function convertQueueToNormal(msgId){
+  var el=document.querySelector('#queueStack .queue-item[data-msgid="'+msgId+'"]');
+  if(el){
+    el.style.transition='all 0.3s ease';
+    el.style.maxHeight='0';
+    el.style.opacity='0';
+    el.style.margin='0';
+    el.style.padding='0';
+    el.style.border='none';
+    setTimeout(function(){removeQueueItem(msgId);},300);
+  }else{
+    removeQueueItem(msgId);
+  }
+}
+
+// ── Queue Editor Overlay ──
+function openQueueEditor(msgId){
+  var q=_queueItems.find(function(x){return x.msgId===msgId;});
+  if(!q)return;
+  _editingQueueId=msgId;
+  // Remove from queue temporarily (will be re-added on save)
+  _queueItems=_queueItems.filter(function(x){return x.msgId!==msgId;});
+  renderQueueStack();
+  var overlay=document.getElementById('queue-editor-overlay');
+  var input=document.getElementById('queueEditorInput');
+  input.value=q.text;
+  overlay.classList.add('show');
+  input.focus();
+  input.setSelectionRange(input.value.length,input.value.length);
+}
+
+function closeQueueEditor(save){
+  var overlay=document.getElementById('queue-editor-overlay');
+  var input=document.getElementById('queueEditorInput');
+  overlay.classList.remove('show');
+  var text=input.value.trim();
+  if(save&&text&&_editingQueueId){
+    // Add back to queue with a new msgId to avoid confusion
+    var newMsgId='q'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
+    var entry={msgId:newMsgId,text:text,createdAt:Date.now()};
+    _queueItems.push(entry);
+    // Notify backend of updated message
+    if(ws&&ws.readyState===WebSocket.OPEN){
+      ws.send(JSON.stringify({type:'chat',message:text,session_id:sessionId,message_id:newMsgId,agentPref:_agentPref}));
+    }
+    renderQueueStack();
+  }else if(!save&&_editingQueueId){
+    // Discard - remove from queue permanently
+    // Do nothing, it was already removed in openQueueEditor
+  }
+  _editingQueueId=null;
+}
+
+function deleteQueueItem(msgId){
+  if(!msgId&&_editingQueueId)msgId=_editingQueueId;
+  removeQueueItem(msgId||'');
+  // If editing, close overlay
+  if(_editingQueueId){
+    var overlay=document.getElementById('queue-editor-overlay');
+    overlay.classList.remove('show');
+    _editingQueueId=null;
+  }
 }
 
 function addQueuedMsg(text){
