@@ -108,7 +108,38 @@ Write-Host "        pip OK" -ForegroundColor Green
 Write-Host ""
 Write-Host "[3/6] Setting up virtual environment..." -ForegroundColor Yellow
 
-if (-not (Test-Path ".venv")) {
+function Test-VenvHealthy {
+    param([string]$venvPython)
+    # Check python works
+    $ver = & $venvPython --version 2>&1
+    if ($LASTEXITCODE -ne 0) { return $false }
+    # Check pip works
+    & $venvPython -m pip --version 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    # Check a key dependency is installed (fastapi)
+    $check = & $venvPython -c "import fastapi" 2>&1
+    if ($LASTEXITCODE -ne 0) { return $false }
+    return $true
+}
+
+$needCreate = $true
+if (Test-Path ".venv") {
+    $venvPython = ".venv\Scripts\python.exe"
+    if (Test-Path $venvPython) {
+        if (Test-VenvHealthy -venvPython $venvPython) {
+            Write-Host "        Using existing .venv\ (healthy)" -ForegroundColor Gray
+            $needCreate = $false
+        } else {
+            Write-Host "        Existing .venv\ is broken (missing dependencies), recreating..." -ForegroundColor Yellow
+            Remove-Item -Recurse -Force ".venv" -ErrorAction SilentlyContinue
+        }
+    } else {
+        Write-Host "        Existing .venv\ is incomplete, recreating..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force ".venv" -ErrorAction SilentlyContinue
+    }
+}
+
+if ($needCreate) {
     Write-Host "        Creating .venv ..." -ForegroundColor Gray
     & $pythonExe -m venv .venv
     if ($LASTEXITCODE -ne 0) {
@@ -117,8 +148,6 @@ if (-not (Test-Path ".venv")) {
         exit 1
     }
     Write-Host "        Virtual environment created." -ForegroundColor Green
-} else {
-    Write-Host "        Using existing .venv\" -ForegroundColor Gray
 }
 
 $venvActivate = ".venv\Scripts\Activate.ps1"
@@ -138,6 +167,18 @@ Write-Host ""
 Write-Host "[4/6] Installing dependencies..." -ForegroundColor Yellow
 
 python -m pip install --upgrade pip 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "        Warning: pip upgrade failed, continuing with current version..." -ForegroundColor Yellow
+}
+# Ensure pip is functional before proceeding
+python -m pip --version 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] pip is not functional in virtual environment." -ForegroundColor Red
+    Write-Host "        Try deleting .venv and re-running this script."
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+Write-Host "        Installing packages from requirements.txt..." -ForegroundColor Gray
 python -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Failed to install dependencies." -ForegroundColor Red

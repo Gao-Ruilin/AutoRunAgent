@@ -172,12 +172,35 @@ if ! "$PYTHON_CMD" -m venv --help &>/dev/null 2>&1; then
     esac
 fi
 
-if [[ ! -d ".venv" ]]; then
+test_venv_healthy() {
+    local venv_python="$1"
+    "$venv_python" --version &>/dev/null || return 1
+    "$venv_python" -m pip --version &>/dev/null || return 1
+    "$venv_python" -c "import fastapi" 2>/dev/null || return 1
+    return 0
+}
+
+NEED_CREATE=true
+if [[ -d ".venv" ]]; then
+    VENV_PYTHON=".venv/bin/python"
+    if [[ -f "$VENV_PYTHON" ]]; then
+        if test_venv_healthy "$VENV_PYTHON"; then
+            echo "        Using existing .venv/ (healthy)"
+            NEED_CREATE=false
+        else
+            echo -e "        ${YELLOW}Existing .venv/ is broken (missing dependencies), recreating...${NC}"
+            rm -rf .venv
+        fi
+    else
+        echo -e "        ${YELLOW}Existing .venv/ is incomplete, recreating...${NC}"
+        rm -rf .venv
+    fi
+fi
+
+if $NEED_CREATE; then
     echo "        Creating .venv ..."
     "$PYTHON_CMD" -m venv .venv
     echo -e "        ${GREEN}Virtual environment created.${NC}"
-else
-    echo "        Using existing .venv/"
 fi
 
 # shellcheck source=/dev/null
@@ -190,7 +213,13 @@ echo -e "        ${GREEN}Virtual environment activated.${NC}"
 echo ""
 echo -e "${YELLOW}[4/6] Installing dependencies...${NC}"
 
-pip install --upgrade pip >/dev/null 2>&1
+pip install --upgrade pip >/dev/null 2>&1 || echo -e "        ${YELLOW}Warning: pip upgrade failed, continuing...${NC}"
+# Ensure pip is functional
+pip --version &>/dev/null || {
+    echo -e "${RED}[ERROR]${NC} pip is not functional. Try deleting .venv and re-running."
+    exit 1
+}
+echo "        Installing packages from requirements.txt..."
 pip install -r requirements.txt
 echo -e "        ${GREEN}Dependencies installed.${NC}"
 
