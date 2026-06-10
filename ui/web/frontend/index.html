@@ -709,24 +709,10 @@ a:hover{color:var(--accent-hover)}
             <span data-i18n="welcomeTips2">拖拽文件到输入框 → @ 引用 · 点击 <kbd>⚙️</kbd> 配置模型和 API</span>
           </div>
         </div>
-      </div>
 
-      <!-- Queue Area (stacked queued messages) -->
+      <!-- Queue Area (stacked queued messages at bottom) -->
       <div class="queue-stack" id="queueStack"></div>
-    </div>
-
-    <!-- Queue Editor Overlay -->
-    <div id="queue-editor-overlay">
-      <div class="queue-editor-dialog">
-        <div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:8px">编辑排队消息</div>
-        <textarea id="queueEditorInput" placeholder="修改消息内容..."></textarea>
-        <div class="queue-editor-actions">
-          <button class="qe-delete" onclick="deleteQueueItem()">删除</button>
-          <button class="qe-cancel" onclick="closeQueueEditor(false)">取消</button>
-          <button class="qe-save" onclick="closeQueueEditor(true)">保存并重新排队</button>
-        </div>
       </div>
-    </div>
 
     <!-- Task Panel (Cursor-style) -->
       <div class="task-panel" id="taskPanel">
@@ -789,6 +775,19 @@ a:hover{color:var(--accent-hover)}
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
+
+<!-- Queue Editor Overlay -->
+<div id="queue-editor-overlay">
+  <div class="queue-editor-dialog">
+    <div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:8px">编辑排队消息</div>
+    <textarea id="queueEditorInput" placeholder="修改消息内容..."></textarea>
+    <div class="queue-editor-actions">
+      <button class="qe-delete" onclick="deleteQueueItem()">删除</button>
+      <button class="qe-cancel" onclick="closeQueueEditor(false)">取消</button>
+      <button class="qe-save" onclick="closeQueueEditor(true)">保存并重新排队</button>
+    </div>
+  </div>
+</div>
 
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settingsModal">
