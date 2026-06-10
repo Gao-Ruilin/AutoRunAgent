@@ -286,7 +286,7 @@ class OpenAICompatibleClient:
                                         tc_id = tc.get("id", "")
                                         fn = tc.get("function", {})
                                         tc_name = fn.get("name", "")
-                                        tc_args = fn.get("arguments", "")
+                                        tc_args = fn.get("arguments") or ""
                                         tool_calls_map[idx] = {
                                             "id": tc_id,
                                             "name": tc_name,
@@ -294,7 +294,7 @@ class OpenAICompatibleClient:
                                         }
                                     else:
                                         fn = tc.get("function", {})
-                                        args_delta = fn.get("arguments", "")
+                                        args_delta = fn.get("arguments") or ""
                                         tool_calls_map[idx]["arguments"] += args_delta
 
                                     entry = tool_calls_map[idx]
@@ -310,7 +310,7 @@ class OpenAICompatibleClient:
                                         }
 
                                     fn_delta = tc.get("function", {})
-                                    args_part = fn_delta.get("arguments", "")
+                                    args_part = fn_delta.get("arguments") or ""
                                     if args_part:
                                         yield {"type": "input_json_delta", "partial_json": args_part}
 
@@ -514,16 +514,16 @@ class AnthropicClient:
                                     delta = data.get("delta", {})
                                     dt = delta.get("type", "")
                                     if dt == "text_delta":
-                                        yield {"type": "text_delta", "text": delta.get("text", "")}
+                                        yield {"type": "text_delta", "text": delta.get("text") or ""}
                                     elif dt == "input_json_delta":
                                         yield {
                                             "type": "input_json_delta",
-                                            "partial_json": delta.get("partial_json", ""),
+                                            "partial_json": delta.get("partial_json") or "",
                                         }
                                     elif dt == "thinking_delta":
                                         yield {
                                             "type": "thinking_delta",
-                                            "thinking": delta.get("thinking", ""),
+                                            "thinking": delta.get("thinking") or "",
                                         }
 
                                 elif event_type == "content_block_stop":

@@ -10,6 +10,7 @@ Agent types are dynamically loaded from the agent registry
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from typing import Any, Dict, List, Optional
@@ -114,14 +115,15 @@ def _store_background_task(session_id: Optional[str], description: str, task: as
     async def _reminder():
         await asyncio.sleep(AGENT_REMINDER_DELAY)
         if not task.done() and not task.cancelled():
-            # 检查 Agent 是否仍在运行中
-            for sess in (session_id, "default"):
+            # 检查 Agent 是否在运行中
+            _check_sessions = {session_id, "default"}
+            for sess in _check_sessions:
                 entries = _background_tasks.get(sess, [])
                 for e in entries:
                     if e["description"] == description:
                         # Agent 仍在运行 — 通知门控Agent
                         reminder_msg = (
-                            f"[Agent 提醒] '{description}' 已运行超过 {AGENT_REMINDER_DELAY // 60} 分钟，仍在执行中。"
+                            f"[Agent 提醒] '{description}' 已运行超过 {AGENT_REMINDER_DELAY // 60} 分钟，仍没有正常结束，可能遇到问题。"
                         )
                         # 将提醒存入结果，TaskOutput 可获取
                         if sess not in _background_results:
@@ -206,8 +208,10 @@ def _store_background_task(session_id: Optional[str], description: str, task: as
                     session_id, description, exc_info=True
                 )
 
-        # ── Auto-trigger: notify ALL registered callbacks ──
-        for sid in (session_id, "default"):
+        # ── Auto-trigger: notify registered callbacks ──
+        # Notify both the specific session and "default" (if different)
+        _notify_sids = {session_id, "default"}
+        for sid in _notify_sids:
             cbs = _on_agent_done_callbacks.get(sid, [])
             for cb in cbs:
                 if cb and result_str:
@@ -228,10 +232,11 @@ def drain_background_results(session_id: str) -> Optional[str]:
     Returns combined result text, or None if nothing ready."""
     results = _background_results.pop(session_id, [])
     _background_results_by_desc.pop(session_id, None)  # 同步清理
-    # Also check fallback "default" session
-    fallback = _background_results.pop("default", [])
-    _background_results_by_desc.pop("default", None)
-    results.extend(fallback)
+    # Also check fallback "default" session — only if current session is not already "default"
+    if session_id != "default":
+        fallback = _background_results.pop("default", [])
+        _background_results_by_desc.pop("default", None)
+        results.extend(fallback)
     if not results:
         return None
     return "\n\n---\n".join(results)
@@ -456,7 +461,7 @@ Agent 工具启动专门的代理（子进程），自动处理复杂任务。�
                         event_type = event.get("type", "")
 
                         if event_type == "text_delta":
-                            text = event.get("text", "")
+                            text = event.get("text") or ""
                             assistant_text += text
                             if session_id and text:
                                 _notify_stream(session_id, description, {
@@ -470,7 +475,7 @@ Agent 工具启动专门的代理（子进程），自动处理复杂任务。�
                                 current_input_json = ""
 
                         elif event_type == "input_json_delta":
-                            current_input_json += event.get("partial_json", "")
+                            current_input_json += (event.get("partial_json") or "")
 
                         elif event_type == "content_block_stop":
                             if current_tool_use:
@@ -495,7 +500,7 @@ Agent 工具启动专门的代理（子进程），自动处理复杂任务。�
                                 current_input_json = ""
 
                         elif event_type == "thinking_delta":
-                            reasoning_content += event.get("thinking", "")
+                            reasoning_content += (event.get("thinking") or "")
 
                         elif event_type == "thinking_start":
                             reasoning_content = ""

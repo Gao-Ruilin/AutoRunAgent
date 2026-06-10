@@ -467,7 +467,7 @@ Results are indexed by Agent description — use the description as task_id for 
             if matching:
                 descs = [e.get("description", "?") for e in matching]
                 return ToolResult(
-                    data=f"Agent 仍在运行中 — 匹配 '{task_id}': {', '.join(descs)}。稍后再检查结果。",
+                    data=f"Agent 尚未完成 — 匹配 '{task_id}': {', '.join(descs)}。可稍后再检查结果。",
                     is_error=False,
                 )
 
@@ -481,7 +481,7 @@ Results are indexed by Agent description — use the description as task_id for 
         if running:
             descs = [e.get("description", "?") for e in running]
             return ToolResult(
-                data=f"Agent 仍在运行中 ({len(running)}个): {', '.join(descs)}。完成后结果自动加入对话。",
+                data=f"有 {len(running)} 个 Agent 尚未完成: {', '.join(descs)}。完成后结果自动加入对话。",
                 is_error=False,
             )
 
@@ -494,7 +494,7 @@ Results are indexed by Agent description — use the description as task_id for 
             if running:
                 descs = [e.get("description", "?") for e in running]
                 return ToolResult(
-                    data=f"Agent 仍在运行中 ({len(running)}个): {', '.join(descs)}。",
+                    data=f"有 {len(running)} 个 Agent 尚未完成: {', '.join(descs)}。",
                     is_error=False,
                 )
 
