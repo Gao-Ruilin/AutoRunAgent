@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autorun"
+version = "1.0.0"
+description = "AutoRUN — Universal AI coding assistant with OpenAI/Anthropic API support"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "Ruilin Gao"},
+]
+keywords = ["ai", "coding", "assistant", "cli", "openai", "anthropic"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
+
+dependencies = [
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+    "prompt-toolkit>=3.0.0",
+    "textual>=0.50.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "websockets>=10.0",
+    "aiohttp>=3.8.0",
+    "httpx>=0.24.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+web = ["fastapi>=0.100.0", "uvicorn>=0.23.0", "websockets>=10.0"]
+dev = ["pytest>=7.0", "pytest-asyncio", "black", "ruff"]
+
+[project.scripts]
+autorun = "main:cli_main"
+
+[project.urls]
+Homepage = "https://github.com/auto-run/autorun"
+Repository = "https://github.com/auto-run/autorun"
+
+[tool.setuptools]
+py-modules = ["main", "cli", "commands", "query", "query_engine"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["dev_sources*", ".venv*"]

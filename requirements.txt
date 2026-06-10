@@ -1,0 +1,26 @@
+# AutoRUN
+# Python 3.8+ 
+
+# Core
+pydantic>=2.0.0
+
+# CLI UI
+rich>=13.0.0
+prompt-toolkit>=3.0.0
+textual>=0.50.0
+
+# Web UI
+fastapi>=0.100.0
+uvicorn>=0.23.0
+websockets>=10.0
+
+# Async
+aiohttp>=3.8.0
+httpx>=0.24.0
+
+# Utilities
+python-dotenv>=1.0.0
+
+# OCR (optional — install falcon_perception from dev_sources/)
+# pip install -e dev_sources/Falcon-Perception-main
+# Dependencies: torch, transformers, torchvision, huggingface_hub, safetensors, tokenizers, Pillow

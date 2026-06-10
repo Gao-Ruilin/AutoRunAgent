@@ -1,0 +1,10 @@
+This directory contains source code from the Falcon-Perception project,
+copyright (c) 2025 Technology Innovation Institute (TII), UAE.
+
+Source: https://github.com/tiiuae/Falcon-Perception
+License: Apache-2.0
+
+The code has been adapted (import paths changed from "falcon_perception.*"
+to relative imports "from .*") to integrate with AutoRUN v1.
+
+Original license text: https://www.apache.org/licenses/LICENSE-2.0

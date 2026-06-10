@@ -1,0 +1,18 @@
+# Environment
+.env
+
+# Resume
+resume.typ
+
+# Dev sources (external projects for reference)
+dev_sources/
+
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+autorun.egg-info
+.autorun

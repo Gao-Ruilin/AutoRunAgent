@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoRUN — Web UI</title>
+<style>
+/* ── Reset & Variables ── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-primary:#0d0d1a;
+  --bg-secondary:#14142a;
+  --bg-tertiary:#1a1a35;
+  --bg-surface:#1e1e3a;
+  --bg-hover:#2a2a4a;
+  --bg-input:#0f0f20;
+  --text-primary:#e4e4ec;
+  --text-secondary:#9090b0;
+  --text-dim:#606080;
+  --accent:#6c8cff;
+  --accent-hover:#8aa4ff;
+  --accent-subtle:rgba(108,140,255,0.12);
+  --green:#4caf7d;
+  --red:#e55555;
+  --orange:#f0a030;
+  --border:#222245;
+  --border-light:#2a2a50;
+  --radius:8px;
+  --radius-sm:4px;
+  --radius-lg:12px;
+  --shadow:0 2px 12px rgba(0,0,0,0.4);
+  --font-mono:'Cascadia Code','Fira Code','JetBrains Mono',monospace;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --sidebar-w:260px;
+  --header-h:52px;
+  --statusbar-h:28px;
+  --transition:150ms ease;
+}
+body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-primary);height:100vh;display:flex;overflow:hidden;font-size:14px;line-height:1.5}
+button{cursor:pointer;font-family:inherit;font-size:inherit}
+button:disabled{cursor:not-allowed;opacity:0.4}
+input,textarea{font-family:inherit;font-size:inherit}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--accent-hover)}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ── SVG Icons ── */
+.icon{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;display:inline-block;vertical-align:middle}
+
+/* ── Layout ── */
+.app{display:flex;width:100%;height:100vh}
+
+/* ── Sidebar ── */
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--bg-secondary);display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden}
+.sidebar-head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
+.sidebar-logo{font-size:15px;font-weight:700;color:var(--accent);letter-spacing:-0.3px}
+.sidebar-new{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:var(--radius);background:var(--accent-subtle);color:var(--accent);border:1px solid transparent;font-size:12px;font-weight:600;transition:background var(--transition)}
+.sidebar-new:hover{background:rgba(108,140,255,0.2)}
+.sidebar-sessions{flex:1;overflow-y:auto;padding:6px 8px;display:flex;flex-direction:column;gap:2px}
+.session-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius);cursor:pointer;font-size:13px;color:var(--text-secondary);transition:all var(--transition);position:relative;border:1px solid transparent}
+.session-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.session-item.active{background:var(--accent-subtle);color:var(--accent);border-color:rgba(108,140,255,0.2)}
+.session-item .s-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-item .s-del{opacity:0;width:16px;height:16px;border:none;background:none;color:var(--text-dim);font-size:14px;line-height:1;padding:0;border-radius:2px;transition:opacity var(--transition)}
+.session-item:hover .s-del{opacity:1}
+.session-item .s-del:hover{color:var(--red);background:rgba(229,85,85,0.15)}
+.sidebar-footer{padding:10px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:8px}
+.sidebar-footer .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.dot-conn{background:var(--green)}
+.dot-disconn{background:var(--red)}
+.sidebar-footer .st-ext{font-size:10px;color:var(--text-dim);margin-left:auto;cursor:pointer;padding:0 4px}
+
+/* ── Main ── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* ── Header ── */
+.header{height:var(--header-h);min-height:var(--header-h);padding:0 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;background:var(--bg-secondary)}
+.header-left{display:flex;align-items:center;gap:10px;flex:1}
+.header-title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:6px}
+.header-title .h-dot{width:7px;height:7px;border-radius:50%}
+.header-right{display:flex;align-items:center;gap:6px}
+.header-btn{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:none;background:none;color:var(--text-secondary);border-radius:var(--radius);transition:all var(--transition)}
+.header-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+.header-btn .icon{width:16px;height:16px}
+
+/* ── Model Selector ── */
+.model-select{position:relative}
+.model-select-btn{display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-secondary);border-radius:var(--radius);font-size:12px;font-weight:500;transition:all var(--transition);white-space:nowrap}
+.model-select-btn:hover{border-color:var(--accent);color:var(--text-primary)}
+.model-select-btn .icon{width:14px;height:14px}
+.model-dropdown{position:absolute;top:calc(100% + 4px);right:0;min-width:220px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:4px;box-shadow:var(--shadow);z-index:100;display:none}
+.model-dropdown.open{display:block}
+.model-opt{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--radius);cursor:pointer;font-size:12px;color:var(--text-secondary);transition:all var(--transition);border:none;background:none;width:100%;text-align:left}
+.model-opt:hover{background:var(--bg-hover);color:var(--text-primary)}
+.model-opt.active{background:var(--accent-subtle);color:var(--accent)}
+.model-opt .m-name{flex:1;font-weight:500}
+.model-opt .m-check{color:var(--accent);font-size:14px}
+.model-opt .m-desc{font-size:10px;color:var(--text-dim);display:block;margin-top:2px}
+
+/* ── Messages ── */
+.messages{flex:1;overflow-y:auto;padding:16px 0;display:flex;flex-direction:column;gap:0}
+.msgs-inner{max-width:800px;width:100%;margin:0 auto;padding:0 24px;display:flex;flex-direction:column;gap:4px}
+.msg-group{margin-bottom:8px}
+.msg{padding:10px 14px;line-height:1.6;font-size:13.5px;word-wrap:break-word;overflow-wrap:break-word}
+.msg.user{background:var(--accent-subtle);border-radius:var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);max-width:75%;align-self:flex-end;margin-left:auto}
+.msg.assistant{max-width:92%;align-self:flex-start}
+.msg.assistant .msg-verb{color:var(--text-dim);font-style:italic}
+.msg-header{display:flex;align-items:center;gap:6px;margin-bottom:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px}
+.msg-header.assistant-hdr{color:var(--text-secondary)}
+.msg-content{line-height:1.65}
+.msg-content p{margin:4px 0}
+.msg-content p:first-child{margin-top:0}
+.msg-content p:last-child{margin-bottom:0}
+
+/* Markdown */
+.msg-content code{background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:var(--font-mono);font-size:0.85em}
+.msg-content pre{position:relative;background:var(--bg-input);padding:36px 14px 12px;border-radius:var(--radius);overflow-x:auto;margin:8px 0;border:1px solid var(--border);font-family:var(--font-mono);font-size:12px;line-height:1.5}
+.msg-content pre code{background:transparent;padding:0;font-size:inherit}
+.msg-content h1,.msg-content h2,.msg-content h3,.msg-content h4{margin:10px 0 4px;line-height:1.3}
+.msg-content h1{font-size:1.25rem}
+.msg-content h2{font-size:1.15rem}
+.msg-content h3{font-size:1.05rem}
+.msg-content ul,.msg-content ol{padding-left:20px;margin:4px 0}
+.msg-content li{margin:2px 0}
+.msg-content blockquote{border-left:3px solid var(--accent);padding:2px 12px;margin:6px 0;color:var(--text-secondary)}
+/* ── File Tree ── */
+.file-tree{flex:1;overflow-y:auto;padding:4px 6px;font-size:12px;user-select:none}
+.tree-item{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:var(--radius-sm);cursor:pointer;color:var(--text-secondary);transition:all var(--transition);white-space:nowrap}
+.tree-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.tree-item.active{background:var(--accent-subtle);color:var(--accent)}
+.tree-item .t-arrow{width:14px;height:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;transition:transform var(--transition)}
+.tree-item .t-arrow.open{transform:rotate(90deg)}
+.tree-item .t-icon{width:14px;height:14px;flex-shrink:0}
+.tree-item .t-name{overflow:hidden;text-overflow:ellipsis}
+.tree-children{display:none}
+.tree-children.open{display:block}
+.tree-children .tree-item{padding-left:18px}
+/* ── Model dropdown note & delete ── */
+.model-opt .m-note{font-size:10px;color:var(--text-dim);max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:auto;margin-right:4px}
+.model-opt .m-del{width:16px;height:16px;border:none;background:none;color:var(--text-dim);font-size:12px;padding:0;border-radius:2px;flex-shrink:0;opacity:0;transition:opacity var(--transition)}
+.model-opt:hover .m-del{opacity:1}
+.model-opt .m-del:hover{color:var(--red);background:rgba(229,85,85,0.15)}
+/* ── Settings saved models list ── */
+.saved-models-list{display:flex;flex-direction:column;gap:4px;max-height:140px;overflow-y:auto}
+.saved-model-item{display:flex;align-items:center;gap:6px;padding:5px 8px;background:var(--bg-input);border-radius:var(--radius-sm);font-size:12px}
+.saved-model-item .sm-name{flex:1;font-weight:500;color:var(--text-primary)}
+.saved-model-item .sm-note{font-size:10px;color:var(--text-dim)}
+.saved-model-item .sm-del{width:18px;height:18px;border:none;background:none;color:var(--text-dim);cursor:pointer;border-radius:2px;font-size:12px}
+.saved-model-item .sm-del:hover{color:var(--red);background:rgba(229,85,85,0.15)}
+.msg-content table{border-collapse:collapse;margin:6px 0;width:100%}
+.msg-content th,.msg-content td{border:1px solid var(--border);padding:5px 10px;text-align:left}
+.msg-content th{background:var(--bg-tertiary);font-weight:600}
+.msg-content hr{border:none;border-top:1px solid var(--border);margin:8px 0}
+.msg-content strong{font-weight:700}
+.msg-content em{font-style:italic}
+
+/* Code block header */
+.code-hdr{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;padding:4px 12px;background:var(--bg-tertiary);border-bottom:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;font-size:11px}
+.code-lang{color:var(--text-dim);font-weight:500}
+.code-copy{display:flex;align-items:center;gap:4px;border:none;background:none;color:var(--text-dim);font-size:11px;padding:2px 6px;border-radius:var(--radius-sm);transition:all var(--transition)}
+.code-copy:hover{background:var(--bg-hover);color:var(--text-primary)}
+.code-copy.copied{color:var(--green)}
+
+/* Tool call card */
+.tool-card{margin:6px 0;border:1px solid var(--border-light);border-radius:var(--radius);overflow:hidden;background:var(--bg-tertiary)}
+.tool-card-header{display:flex;align-items:center;gap:6px;padding:7px 12px;cursor:pointer;user-select:none;transition:background var(--transition);font-size:12px;color:var(--text-secondary)}
+.tool-card-header:hover{background:var(--bg-hover)}
+.tool-card-header .tc-icon{width:14px;height:14px;color:var(--accent)}
+.tool-card-header .tc-name{font-weight:600;color:var(--accent)}
+.tool-card-header .tc-desc{font-size:10px;color:var(--text-dim);opacity:0.55;margin-right:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
+.tool-card-header .tc-arrow{transition:transform var(--transition);font-size:10px;color:var(--text-dim)}
+.tool-card-header .tc-arrow.open{transform:rotate(90deg)}
+.tool-card-body{display:none;border-top:1px solid var(--border-light);font-size:12px}
+.tool-card-body.open{display:block}
+.tool-card-body pre{padding:10px 12px;margin:0;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);overflow-x:auto;background:var(--bg-input)}
+.tool-card-body .tc-result{padding:10px 12px;border-top:1px solid var(--border-light);color:var(--text-secondary)}
+.tool-card-body .tc-result pre{border:none;padding:0;margin:4px 0;background:transparent}
+.tool-card-body .tc-label{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-dim);margin-bottom:4px}
+
+/* Error message */
+.msg-error{padding:10px 14px;background:rgba(229,85,85,0.1);border:1px solid rgba(229,85,85,0.25);border-radius:var(--radius);color:#e08080;font-size:13px;margin:6px 0}
+.msg-error .er-actions{margin-top:6px;display:flex;gap:6px}
+.msg-error .er-retry{padding:3px 10px;border:1px solid rgba(229,85,85,0.3);background:transparent;color:#e08080;border-radius:var(--radius-sm);font-size:11px;transition:all var(--transition)}
+.msg-error .er-retry:hover{background:rgba(229,85,85,0.15)}
+
+/* System message */
+.msg-system{text-align:center;font-size:11px;color:var(--text-dim);padding:6px 0;margin:2px 0}
+
+/* Loading skeleton */
+.msg-skeleton{display:flex;gap:10px;padding:10px 14px;max-width:60%;align-self:flex-start}
+.sk-avatar{width:28px;height:28px;border-radius:50%;background:var(--bg-hover);flex-shrink:0}
+.sk-lines{flex:1;display:flex;flex-direction:column;gap:6px}
+.sk-line{height:12px;border-radius:4px;background:var(--bg-hover);animation:sk-pulse 1.5s ease-in-out infinite}
+.sk-line:nth-child(1){width:65%}
+.sk-line:nth-child(2){width:85%}
+.sk-line:nth-child(3){width:45%}
+@keyframes sk-pulse{0%,100%{opacity:0.4}50%{opacity:0.8}}
+
+/* Welcome screen */
+.welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;text-align:center;padding:40px 20px;gap:12px}
+.welcome-icon{width:48px;height:48px;color:var(--accent);margin-bottom:8px}
+.welcome h2{font-size:20px;font-weight:600;color:var(--text-primary)}
+.welcome p{color:var(--text-secondary);font-size:13px;max-width:400px;line-height:1.6}
+.welcome .wl-tips{display:flex;flex-direction:column;gap:4px;margin-top:8px;font-size:12px;color:var(--text-dim)}
+.welcome .wl-tips kbd{background:var(--bg-hover);padding:1px 6px;border-radius:3px;font-family:var(--font-mono);font-size:11px;border:1px solid var(--border)}
+
+/* ── Input Area ── */
+.input-area{padding:12px 16px 14px;border-top:1px solid var(--border);background:var(--bg-secondary)}
+
+.input-inner{max-width:800px;margin:0 auto;display:flex;gap:8px;align-items:flex-end}
+.input-wrap{flex:1;position:relative;display:flex;align-items:flex-end;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-lg);transition:border-color var(--transition);padding:4px}
+.input-wrap:focus-within{border-color:var(--accent)}
+.input-wrap.drag-over{border-color:var(--accent);background:var(--accent-subtle);box-shadow:0 0 8px rgba(108,140,255,0.3)}
+.input-wrap textarea{flex:1;background:transparent;color:var(--text-primary);border:none;padding:6px 10px;font-size:13.5px;resize:none;min-height:36px;max-height:150px;outline:none;line-height:1.5;font-family:var(--font-sans)}
+.input-send{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:none;background:var(--accent);color:#fff;border-radius:50%;transition:all var(--transition);flex-shrink:0}
+.input-send:hover{background:var(--accent-hover);transform:scale(1.05)}
+.input-send .icon{width:16px;height:16px}
+.input-send.stop{background:var(--red)}
+.input-send.stop:hover{background:#ff6666}
+
+/* ── Status Bar ── */
+.statusbar{height:var(--statusbar-h);min-height:var(--statusbar-h);display:flex;align-items:center;padding:0 14px;background:var(--bg-tertiary);border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);gap:12px}
+.statusbar .sb-dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.statusbar .sb-item{display:flex;align-items:center;gap:4px}
+.statusbar .sb-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+
+/* ── Settings Modal ── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);width:420px;max-width:90vw;max-height:80vh;overflow-y:auto;padding:0}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)}
+.modal-head h3{font-size:15px;font-weight:600}
+.modal-close{width:28px;height:28px;border:none;background:none;color:var(--text-dim);border-radius:var(--radius);display:flex;align-items:center;justify-content:center}
+.modal-close:hover{background:var(--bg-hover);color:var(--text-primary)}
+.modal-body{padding:16px;display:flex;flex-direction:column;gap:14px}
+.modal-field{display:flex;flex-direction:column;gap:4px}
+.modal-field label{font-size:12px;font-weight:600;color:var(--text-secondary)}
+.modal-field input,.modal-field select{padding:8px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);outline:none;transition:border-color var(--transition)}
+.modal-field input:focus,.modal-field select:focus{border-color:var(--accent)}
+.modal-field .hint{font-size:11px;color:var(--text-dim)}
+.modal-foot{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.modal-foot button{padding:7px 16px;border-radius:var(--radius);font-size:12px;font-weight:600;border:none}
+.modal-foot .btn-primary{background:var(--accent);color:#fff}
+.modal-foot .btn-primary:hover{background:var(--accent-hover)}
+.modal-foot .btn-cancel{background:var(--bg-hover);color:var(--text-secondary)}
+.modal-foot .btn-cancel:hover{color:var(--text-primary)}
+.btn-add{display:inline-flex;align-items:center;gap:4px;padding:5px 12px;font-size:11px;font-weight:600;border:1px solid rgba(108,140,255,0.25);background:var(--accent-subtle);color:var(--accent);border-radius:var(--radius);cursor:pointer;transition:all var(--transition)}
+.btn-add:hover{background:rgba(108,140,255,0.2);border-color:var(--accent)}
+
+/* ── Responsive ── */
+@media(max-width:720px){
+  .sidebar{display:none;position:fixed;z-index:50;height:100vh;width:280px}
+  .sidebar.open{display:flex}
+  .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:49}
+  .sidebar-overlay.open{display:block}
+  .mobile-menu-btn{display:flex!important}
+  .msgs-inner{padding:0 12px}
+}
+.mobile-menu-btn{display:none}
+
+/* ── Toast ── */
+.toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);padding:6px 16px;background:var(--bg-surface);border:1px solid var(--border);border-radius:20px;font-size:12px;color:var(--text-primary);box-shadow:var(--shadow);z-index:300;opacity:0;transition:opacity 0.3s;pointer-events:none}
+.toast.show{opacity:1}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/monokai.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- Sidebar overlay (mobile) -->
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <div class="sidebar-logo">AutoRUN</div>
+      <button class="sidebar-new" onclick="clearChat()">
+        <svg class="icon" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        清空对话
+      </button>
+    </div>
+    <div class="file-tree" id="fileTree">
+      <div class="tree-item" style="color:var(--text-dim);cursor:default">
+        <span style="font-size:10px">加载中...</span>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <span class="dot" id="sbDot"></span>
+      <span id="sbStatus">连接中...</span>
+      <span class="st-ext" onclick="showShortcuts()">快捷键</span>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <button class="header-btn mobile-menu-btn" onclick="toggleSidebar()" title="菜单">
+          <svg class="icon" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="header-title">
+          <span class="h-dot" id="hDot"></span>
+          <span>AutoRUN</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="model-select" id="modelSelect">
+          <button class="model-select-btn" onclick="toggleModelDropdown()">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            <span id="modelLabel">未选择</span>
+          </button>
+          <div class="model-dropdown" id="modelDropdown"></div>
+        </div>
+        <button class="header-btn" onclick="toggleSettings()" title="设置">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </button>
+        <button class="header-btn" onclick="clearChat()" title="清空对话">
+          <svg class="icon" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Messages -->
+    <div class="messages" id="messages">
+      <div class="welcome" id="welcomeScreen">
+        <svg class="welcome-icon icon" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        <h2>AutoRUN Web UI</h2>
+        <p>连接到服务器后开始对话。AI 助手将帮你完成编码、分析、调试等任务。</p>
+        <div class="wl-tips">
+          <span><kbd>Enter</kbd> 发送 · <kbd>Shift+Enter</kbd> 换行</span>
+          <span>拖拽文件到输入框 → @ 引用 · 点击 <kbd>⚙️</kbd> 配置模型和 API</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input Area -->
+    <div class="input-area">
+      <div class="input-inner">
+        <div class="input-wrap">
+          <textarea id="input" rows="1" placeholder="输入消息..." autofocus></textarea>
+          <button class="input-send" id="sendBtn" onclick="onSendClick()" title="发送">
+            <svg class="icon" id="sendIcon" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            <svg class="icon" id="stopIcon" viewBox="0 0 24 24" style="display:none"><rect x="6" y="6" width="12" height="12" fill="currentColor" stroke="none"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="statusbar">
+      <span class="sb-item"><span class="sb-dot" id="statusDot"></span></span>
+      <span class="sb-item" id="sbModel"><span id="sbModelText">--</span></span>
+      <span class="sb-right">
+        <span class="sb-item" id="sbSession" title="会话 ID">---</span>
+        <span class="sb-item" id="sbMsgCount" title="消息数">0 条消息</span>
+      </span>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>设置</h3>
+      <button class="modal-close" onclick="toggleSettings()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-field">
+        <label for="sApiType">API 类型</label>
+        <select id="sApiType">
+          <option value="openai">OpenAI 兼容</option>
+          <option value="anthropic">Anthropic 兼容</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="sApiUrl">API URL</label>
+        <input type="text" id="sApiUrl" placeholder="https://api.openai.com">
+        <span class="hint">API 服务的基础地址</span>
+      </div>
+      <div class="modal-field">
+        <label for="sApiKey">API Key</label>
+        <input type="password" id="sApiKey" placeholder="输入 API Key...">
+        <span class="hint">存储在本地，不会泄露</span>
+      </div>
+      <div class="modal-field">
+        <label for="sModelName">模型名称</label>
+        <input type="text" id="sModelName" placeholder="例如 gpt-4o, claude-sonnet-4-6">
+      </div>
+      <div class="modal-field">
+        <label for="sModelNote">备注</label>
+        <input type="text" id="sModelNote" placeholder="例如：默认模型、快速轻量...">
+      </div>
+      <div style="display:flex;justify-content:flex-end">
+        <button class="btn-add" onclick="addUserModel()">+ 添加到列表</button>
+      </div>
+      <div class="modal-field">
+        <label>已保存的模型</label>
+        <div class="saved-models-list" id="savedModelsList">
+          <span class="hint">尚未添加模型</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-cancel" onclick="toggleSettings()">取消</button>
+      <button class="btn-primary" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Shortcuts Toast -->
+<div class="toast" id="shortcutsToast" style="bottom:auto;top:50%;transform:translate(-50%,-50%);padding:16px 24px;border-radius:var(--radius-lg);max-width:320px;text-align:center;line-height:2">
+  <strong style="font-size:14px">快捷键</strong><br>
+  <kbd>Enter</kbd> 发送<br>
+  <kbd>Shift+Enter</kbd> 换行<br>
+  <kbd>Ctrl+K</kbd> 清空对话<br>
+  <kbd>Ctrl+,</kbd> 打开设置
+</div>
+
+<script>
+// ── Configure Marked ──
+if(typeof marked!=='undefined'){
+  marked.setOptions({
+    highlight:function(code,lang){
+      if(lang&&hljs.getLanguage(lang)){
+        try{return hljs.highlight(code,{language:lang}).value}catch(e){}
+      }
+      try{return hljs.highlightAuto(code).value}catch(e){}
+      return code;
+    },
+    breaks:true,gfm:true,
+  });
+}
+
+function renderMarkdown(text){
+  if(typeof marked!=='undefined'){
+    try{return marked.parse(text)}catch(e){return escapeHtml(text)}
+  }
+  return escapeHtml(text).replace(/\n/g,'<br>');
+}
+
+// ── State ──
+let ws=null;
+let connected=false;
+let sessionId='';
+let generating=false;
+let currentAssistantMsgEl=null;
+let currentAssistantText='';
+let reconnectTimer=null;
+let reconnectAttempts=0;
+const MAX_RECONNECT_DELAY=15000;
+let messageCount=0;
+let _lastReadCard=null;      // last Read tool card for merging
+let _lastReadFiles=[];       // accumulated file paths for current Read batch
+
+// ── User Models (localStorage) ──
+let USER_MODELS=loadUserModels();
+function loadUserModels(){
+  try{
+    const raw=localStorage.getItem('autorun_user_models');
+    return raw?JSON.parse(raw):[];
+  }catch(e){return[]}
+}
+function saveUserModels(){
+  localStorage.setItem('autorun_user_models',JSON.stringify(USER_MODELS));
+}
+function addUserModel(){
+  const nameEl=document.getElementById('sModelName');
+  const noteEl=document.getElementById('sModelNote');
+  const name=nameEl.value.trim();
+  if(!name){toast('请输入模型名称');return}
+  // replace if exists
+  const idx=USER_MODELS.findIndex(m=>m.name===name);
+  if(idx>=0){USER_MODELS[idx].note=noteEl.value.trim()}else{USER_MODELS.push({name:name,note:noteEl.value.trim()})}
+  saveUserModels();
+  buildModelDropdown();
+  renderSavedModelsList();
+  nameEl.value='';
+  noteEl.value='';
+  toast('模型已添加: '+name);
+}
+function removeUserModel(name,ev){
+  if(ev)ev.stopPropagation();
+  USER_MODELS=USER_MODELS.filter(m=>m.name!==name);
+  saveUserModels();
+  buildModelDropdown();
+  renderSavedModelsList();
+  // If current model was removed, clear selection
+  const cur=localStorage.getItem('autorun_model');
+  if(cur===name){localStorage.removeItem('autorun_model');headerModel.textContent='未选择';sbModelText.textContent='--'}
+  toast('模型已移除: '+name);
+}
+
+// ── DOM ──
+const messagesEl=document.getElementById('messages');
+const msgsInner=document.querySelector('.msgs-inner');
+const inputEl=document.getElementById('input');
+const sendBtn=document.getElementById('sendBtn');
+const sendIcon=document.getElementById('sendIcon');
+const stopIcon=document.getElementById('stopIcon');
+const welcomeEl=document.getElementById('welcomeScreen');
+const statusDot=document.getElementById('statusDot');
+const sbDot=document.getElementById('sbDot');
+const sbStatus=document.getElementById('sbStatus');
+const sbModelText=document.getElementById('sbModelText');
+const sbSession=document.getElementById('sbSession');
+const sbMsgCount=document.getElementById('sbMsgCount');
+const headerModel=document.getElementById('modelLabel');
+const hDot=document.getElementById('hDot');
+const modelDropdown=document.getElementById('modelDropdown');
+const sApiType=document.getElementById('sApiType');
+const sApiUrl=document.getElementById('sApiUrl');
+const sApiKey=document.getElementById('sApiKey');
+const sModelName=document.getElementById('sModelName');
+const sModelNote=document.getElementById('sModelNote');
+
+// ── Init ──
+function init(){
+  buildModelDropdown();
+  loadFileTree();
+  connect();
+  loadSettings();
+  startPing();
+}
+init();
+
+// ── Connect ──
+function connect(){
+  if(ws&&ws.readyState===WebSocket.OPEN)return;
+  const protocol=location.protocol==='https:'?'wss:':'ws:';
+  const wsUrl=protocol+'//'+location.host+'/ws';
+  try{
+    ws=new WebSocket(wsUrl);
+    ws.onopen=()=>{
+      connected=true;
+      reconnectAttempts=0;
+      updateUIStatus(true);
+    };
+    ws.onmessage=(e)=>{
+      try{const msg=JSON.parse(e.data);handleMessage(msg)}catch(ex){}
+    };
+    ws.onclose=()=>{
+      connected=false;
+      updateUIStatus(false);
+      scheduleReconnect();
+    };
+    ws.onerror=()=>{
+      connected=false;
+      updateUIStatus(false);
+    };
+  }catch(e){scheduleReconnect()}
+}
+
+function scheduleReconnect(){
+  if(reconnectTimer)return;
+  const delay=Math.min(1000*Math.pow(1.5,reconnectAttempts),MAX_RECONNECT_DELAY);
+  reconnectAttempts++;
+  setStatusBar('重连中... ('+Math.round(delay/1000)+'s)','warn');
+  reconnectTimer=setTimeout(()=>{
+    reconnectTimer=null;
+    connect();
+  },delay);
+}
+
+function updateUIStatus(ok){
+  const cl=ok?'dot-conn':'dot-disconn';
+  statusDot.className='sb-dot '+cl;
+  sbDot.className='dot '+cl;
+  hDot.className='h-dot '+cl;
+  sbStatus.textContent=ok?'已连接':'已断开';
+  sendBtn.disabled=!ok;
+  if(ok){
+    setStatusBar('已连接','ok');
+    removeWelcomeIfNeeded();
+  }
+}
+
+function setStatusBar(text,type){
+  sbStatus.textContent=text;
+  if(type==='ok'){statusDot.style.background='var(--green)';sbDot.style.background='var(--green)';hDot.style.background='var(--green)'}
+  else if(type==='warn'){statusDot.style.background='var(--orange)';sbDot.style.background='var(--orange)';hDot.style.background='var(--orange)'}
+  else{statusDot.style.background='var(--red)';sbDot.style.background='var(--red)';hDot.style.background='var(--red)'}
+}
+
+// ── Ping ──
+function startPing(){
+  setInterval(()=>{
+    if(connected&&ws&&ws.readyState===WebSocket.OPEN){
+      ws.send(JSON.stringify({type:'ping'}));
+    }
+  },30000);
+}
+
+// ── Message Handling ──
+function handleMessage(msg){
+  switch(msg.type){
+    case 'connected':
+      sessionId=msg.session_id;
+      headerModel.textContent=msg.model||'--';
+      sbModelText.textContent=msg.model||'--';
+      sbSession.textContent='#'+(msg.session_id||'---');
+      updateModelUI(msg.model);
+      addSystemMsg('已连接到服务器。');
+      removeWelcomeIfNeeded();
+      // Sync backend config status to frontend
+      if(msg.api_configured){
+        // Backend has config — update frontend display
+        if(msg.model && !localStorage.getItem('autorun_model')){
+          localStorage.setItem('autorun_model',msg.model);
+        }
+        if(msg.api_type && !localStorage.getItem('autorun_api_type')){
+          localStorage.setItem('autorun_api_type',msg.api_type);
+        }
+        // Update settings form fields to reflect backend state
+        if(!sApiUrl.value) sApiUrl.value=msg.model?'(已配置)':'';
+        if(!sApiKey.value) sApiKey.value='(已配置)';
+        buildModelDropdown();
+      }else if(msg.config_error){
+        addErrorMsg('API 配置不完整: '+msg.config_error+
+          ' 请使用以下命令设置: /api type <openai|anthropic> — 设置 API 类型 /api url <api_url> — 设置 API URL /api key <api_key> — 设置 API 密钥 /model <model_name> — 设置模型名称');
+      }
+      break;
+    case 'text_delta':
+      if(!currentAssistantMsgEl){
+        currentAssistantMsgEl=createAssistantMsg();
+        currentAssistantText='';
+      }
+      currentAssistantText+=msg.text;
+      updateAssistantContent(currentAssistantMsgEl,currentAssistantText);
+      scrollToBottom();
+      break;
+    case 'tool_use':
+      if(currentAssistantMsgEl){
+        finishAssistantMsg(currentAssistantMsgEl);
+        currentAssistantMsgEl=null;
+      }
+      addToolCall(msg.tool_name,msg.tool_input);
+      scrollToBottom();
+      break;
+    case 'tool_result':
+      addToolResult(msg.content,msg.is_error);
+      scrollToBottom();
+      break;
+    case 'message_complete':
+      if(currentAssistantMsgEl){
+        finishAssistantMsg(currentAssistantMsgEl);
+        currentAssistantMsgEl=null;
+        currentAssistantText='';
+      }
+      generating=false;
+      updateSendUI();
+      messageCount++;
+      updateMsgCount();
+      break;
+    case 'error':
+      addErrorMsg(msg.error);
+      if(currentAssistantMsgEl){
+        finishAssistantMsg(currentAssistantMsgEl);
+        currentAssistantMsgEl=null;
+        currentAssistantText='';
+      }
+      generating=false;
+      updateSendUI();
+      break;
+    case 'system':
+      addSystemMsg(msg.text);
+      break;
+    case 'pong':
+      break;
+  }
+}
+
+// ── Message UI ──
+function getOrCreateMsgContainer(){
+  let inner=document.querySelector('.msgs-inner');
+  if(!inner){
+    inner=document.createElement('div');
+    inner.className='msgs-inner';
+    messagesEl.appendChild(inner);
+  }
+  return inner;
+}
+
+function removeWelcomeIfNeeded(){
+  if(welcomeEl&&welcomeEl.parentNode){
+    welcomeEl.remove();
+  }
+  // Ensure msgs-inner exists
+  getOrCreateMsgContainer();
+}
+
+function addUserMsg(text){
+  removeWelcomeIfNeeded();
+  const inner=getOrCreateMsgContainer();
+  const div=document.createElement('div');
+  div.className='msg user';
+  div.innerHTML='<div class="msg-content">'+renderMarkdown(text)+'</div>';
+  inner.appendChild(div);
+  scrollToBottom();
+}
+
+function createAssistantMsg(verb){
+  removeWelcomeIfNeeded();
+  const inner=getOrCreateMsgContainer();
+  const div=document.createElement('div');
+  div.className='msg assistant streaming';
+  const verbHtml=verb?'<div class="msg-verb">'+escapeHtml(verb)+'</div>':'';
+  div.innerHTML='<div class="msg-header assistant-hdr">AutoRUN</div><div class="msg-content">'+verbHtml+'</div>';
+  inner.appendChild(div);
+  return div;
+}
+
+function updateAssistantContent(el,text){
+  const content=el.querySelector('.msg-content');
+  if(content){
+    content.innerHTML=renderMarkdown(text);
+    // Add copy buttons to code blocks
+    addCodeCopyButtons(el);
+  }
+}
+
+function finishAssistantMsg(el){
+  if(!el)return;
+  el.classList.remove('streaming');
+  const content=el.querySelector('.msg-content');
+  if(content){
+    content.innerHTML=renderMarkdown(el._rawText||currentAssistantText||'');
+    addCodeCopyButtons(el);
+  }
+}
+
+function addCodeCopyButtons(container){
+  container.querySelectorAll('pre').forEach(pre=>{
+    if(pre.querySelector('.code-hdr'))return;
+    const code=pre.querySelector('code');
+    if(!code)return;
+    let lang='';
+    if(code.className){
+      const m=code.className.match(/lang-(\w+)/);
+      if(m)lang=m[1];
+    }
+    const hdr=document.createElement('div');
+    hdr.className='code-hdr';
+    hdr.innerHTML='<span class="code-lang">'+(lang||'code')+'</span>';
+    const btn=document.createElement('button');
+    btn.className='code-copy';
+    btn.textContent='复制';
+    btn.onclick=function(e){
+      e.stopPropagation();
+      copyToClipboard(code.textContent||'',btn);
+    };
+    hdr.appendChild(btn);
+    pre.style.paddingTop='36px';
+    pre.insertBefore(hdr,pre.firstChild);
+  });
+}
+
+function copyToClipboard(text,btn){
+  navigator.clipboard.writeText(text).then(()=>{
+    btn.textContent='已复制!';
+    btn.classList.add('copied');
+    setTimeout(()=>{btn.textContent='复制';btn.classList.remove('copied')},2000);
+  }).catch(()=>{
+    btn.textContent='复制失败';
+  });
+}
+
+function addToolCall(name,input){
+  removeWelcomeIfNeeded();
+  const inner=getOrCreateMsgContainer();
+  const isRead=/read/i.test(name);
+
+  // Extract common fields
+  const desc=input&&input.description?String(input.description):'';
+  const cmd=input&&input.command?String(input.command):'';
+  const displayCmd=cmd.substring(0,200);
+  const filePath=input&&input.file_path?String(input.file_path):'';
+
+  // ── Read tool: merge consecutive reads, default collapsed ──
+  if(isRead){
+    if(_lastReadCard&&filePath){
+      // Add new file if not duplicate
+      if(!_lastReadFiles.includes(filePath)){
+        _lastReadFiles.push(filePath);
+      }
+      const count=_lastReadFiles.length;
+      const shortFile=filePath.split('\\').pop().split('/').pop();
+
+      // Update header count + current file
+      const nameEl=_lastReadCard.querySelector('.tc-name');
+      const descEl=_lastReadCard.querySelector('.tc-desc');
+      if(nameEl)nameEl.textContent='Read ('+count+')';
+      if(descEl)descEl.textContent=shortFile;
+
+      // Update file list in body
+      const bodyPre=_lastReadCard.querySelector('.tool-card-body pre');
+      if(bodyPre)bodyPre.textContent=_lastReadFiles.join('\n');
+      scrollToBottom();
+      return;
+    }
+
+    // First Read card — collapsed by default
+    _lastReadFiles=filePath?[filePath]:[];
+    const shortFile=filePath?filePath.split('\\').pop().split('/').pop():'';
+    const card=document.createElement('div');
+    card.className='tool-card';
+    card.innerHTML=
+      '<div class="tool-card-header" onclick="toggleToolBody(this)">'+
+        '<svg class="tc-icon icon" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>'+
+        '<span class="tc-name">Read (1)</span>'+
+        '<span class="tc-desc">'+escapeHtml(shortFile)+'</span>'+
+        '<span class="tc-arrow">▶</span></div>'+
+      '<div class="tool-card-body">'+
+        '<div class="tc-label">文件</div><pre>'+escapeHtml(filePath)+'</pre></div>';
+    inner.appendChild(card);
+    _lastReadCard=card;
+    scrollToBottom();
+    return;
+  }
+
+  // ── Non-Read tools: reset merge state ──
+  _lastReadCard=null;
+  _lastReadFiles=[];
+
+  const card=document.createElement('div');
+  card.className='tool-card';
+  const id='tc-'+Date.now();
+
+  let inputStr='';
+  try{inputStr=JSON.stringify(input,null,2)}catch(e){}
+  const isLong=inputStr.length>80;
+
+  // Header
+  let headerHtml='<div class="tool-card-header" onclick="toggleToolBody(this)">'+
+    '<svg class="tc-icon icon" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>'+
+    '<span class="tc-name">'+escapeHtml(name)+'</span>';
+  if(desc){
+    headerHtml+='<span class="tc-desc">'+escapeHtml(desc)+'</span>';
+  }
+  headerHtml+='<span class="tc-arrow'+(isLong?'':' open')+'">▶</span></div>';
+
+  // Body
+  let bodyHtml='<div class="tool-card-body'+(isLong?'':' open')+'" id="'+id+'">';
+  const nl=name.toLowerCase();
+  if(nl==='bash'||nl==='bash_tool'||nl==='bash tool'){
+    bodyHtml+='<div class="tc-label">命令</div><pre>'+escapeHtml(displayCmd||inputStr)+'</pre>';
+  }else{
+    bodyHtml+='<div class="tc-label">输入</div><pre>'+escapeHtml(inputStr)+'</pre>';
+  }
+  bodyHtml+='</div>';
+
+  card.innerHTML=headerHtml+bodyHtml;
+  inner.appendChild(card);
+  scrollToBottom();
+}
+
+function toggleToolBody(hdr){
+  const body=hdr.nextElementSibling;
+  const arrow=hdr.querySelector('.tc-arrow');
+  if(body){
+    body.classList.toggle('open');
+    if(arrow)arrow.classList.toggle('open');
+  }
+}
+
+function addToolResult(content,isError){
+  const cards=document.querySelectorAll('.tool-card');
+  if(!cards.length)return;
+  const last=cards[cards.length-1];
+  const body=last.querySelector('.tool-card-body');
+  if(!body)return;
+  const existing=body.querySelector('.tc-result');
+  if(existing)return;
+  const display=String(content).substring(0,1000);
+  const div=document.createElement('div');
+  div.className='tc-result';
+  const label=document.createElement('div');
+  label.className='tc-label';
+  label.textContent=isError?'错误':'结果';
+  div.appendChild(label);
+  const pre=document.createElement('pre');
+  pre.textContent=display;
+  pre.style.color=isError?'#e08080':'inherit';
+  div.appendChild(pre);
+  body.appendChild(div);
+  // Auto-open the card
+  body.classList.add('open');
+  const arrow=last.querySelector('.tc-arrow');
+  if(arrow)arrow.classList.add('open');
+}
+
+function addErrorMsg(text){
+  removeWelcomeIfNeeded();
+  const inner=getOrCreateMsgContainer();
+  const div=document.createElement('div');
+  div.className='msg-error';
+  div.innerHTML='<div>⚠ '+escapeHtml(text)+'</div>'+
+    '<div class="er-actions">'+
+      '<button class="er-retry" onclick="retryLastMessage()">重试</button>'+
+    '</div>';
+  inner.appendChild(div);
+  scrollToBottom();
+}
+
+function retryLastMessage(){
+  const msgs=document.querySelectorAll('.msg.user');
+  if(msgs.length){
+    const last=msgs[msgs.length-1];
+    const text=last.textContent;
+    if(text)sendUserMessage(text.trim());
+  }
+}
+
+function addSystemMsg(text){
+  const inner=getOrCreateMsgContainer();
+  const div=document.createElement('div');
+  div.className='msg-system';
+  div.textContent=text;
+  inner.appendChild(div);
+  if(welcomeEl&&welcomeEl.parentNode)welcomeEl.remove();
+}
+
+function scrollToBottom(){
+  messagesEl.scrollTop=messagesEl.scrollHeight;
+}
+
+// ── Verb Bar ──
+const VERBS=[
+  '思考中','分析中','处理中','生成中','探索中',
+  '推理中','组织中','构建中','优化中','整理中',
+];
+
+// ── Send ──
+function sendMessage(){
+  const text=inputEl.value.trim();
+  if(!text||!connected||generating)return;
+  sendUserMessage(text);
+}
+
+function sendUserMessage(text){
+  addUserMsg(text);
+  generating=true;
+  // Immediately create assistant bubble with verb inside
+  currentAssistantMsgEl=createAssistantMsg(VERBS[Math.floor(Math.random()*VERBS.length)]);
+  currentAssistantText='';
+  updateSendUI();
+  ws.send(JSON.stringify({type:'chat',message:text,session_id:sessionId}));
+  inputEl.value='';
+  inputEl.style.height='auto';
+  scrollToBottom();
+  messageCount++;
+  updateMsgCount();
+}
+
+function stopGeneration(){
+  if(!generating)return;
+  generating=false;
+  updateSendUI();
+  if(currentAssistantMsgEl){
+    finishAssistantMsg(currentAssistantMsgEl);
+    currentAssistantMsgEl=null;
+    currentAssistantText='';
+  }
+}
+
+function updateSendUI(){
+  if(generating){
+    sendBtn.classList.add('stop');
+    sendBtn.title='停止生成';
+    sendIcon.style.display='none';
+    stopIcon.style.display='block';
+  }else{
+    sendBtn.classList.remove('stop');
+    sendBtn.title='发送';
+    sendIcon.style.display='block';
+    stopIcon.style.display='none';
+  }
+}
+
+function onSendClick(){
+  if(generating){stopGeneration()}else{sendMessage()}
+}
+
+// ── Input Events ──
+inputEl.addEventListener('keydown',(e)=>{
+  if(e.key==='Enter'&&!e.shiftKey){
+    e.preventDefault();
+    sendMessage();
+  }
+  // Ctrl+K = clear chat
+  if(e.key==='k'&&(e.ctrlKey||e.metaKey)){
+    e.preventDefault();
+    clearChat();
+  }
+  // Ctrl+, = settings
+  if(e.key===','&&(e.ctrlKey||e.metaKey)){
+    e.preventDefault();
+    toggleSettings();
+  }
+});
+inputEl.addEventListener('input',()=>{
+  inputEl.style.height='auto';
+  inputEl.style.height=Math.min(inputEl.scrollHeight,150)+'px';
+});
+
+// Click main to focus input
+document.querySelector('.main').addEventListener('click',(e)=>{
+  if(e.target===e.currentTarget||e.target.closest('.messages')){
+    inputEl.focus();
+  }
+});
+
+// ── Chat Actions ──
+function clearChat(){
+  const inner=document.querySelector('.msgs-inner');
+  if(inner){
+    inner.innerHTML='';
+  }
+  // Reset read merge state
+  _lastReadCard=null;
+  _lastReadFiles=[];
+  // Show welcome again
+  if(welcomeEl&&!welcomeEl.parentNode){
+    messagesEl.appendChild(welcomeEl);
+  }
+  messageCount=0;
+  updateMsgCount();
+  if(generating)stopGeneration();
+  toast('对话已清空');
+}
+
+// ── Model Selector ──
+function buildModelDropdown(){
+  const curModel=localStorage.getItem('autorun_model')||'';
+  let html='';
+  if(USER_MODELS.length===0){
+    html+='<div class="model-opt" style="color:var(--text-dim);cursor:default">暂无模型 — 请在设置中添加</div>';
+  }else{
+    USER_MODELS.forEach(m=>{
+      const isActive=m.name===curModel;
+      html+='<button class="model-opt'+(isActive?' active':'')+'" onclick="selectModel(\''+escapeHtmlAttr(m.name)+'\')">'+
+        '<span class="m-name">'+escapeHtml(m.name)+'</span>'+
+        (m.note?'<span class="m-note">'+escapeHtml(m.note)+'</span>':'')+
+        '<span class="m-check">'+(isActive?'✓':'')+'</span>'+
+        '<button class="m-del" onclick="removeUserModel(\''+escapeHtmlAttr(m.name)+'\',event)" title="删除">×</button>'+
+      '</button>';
+    });
+  }
+  modelDropdown.innerHTML=html;
+}
+
+function toggleModelDropdown(){
+  modelDropdown.classList.toggle('open');
+}
+document.addEventListener('click',(e)=>{
+  if(!e.target.closest('.model-select')){
+    modelDropdown.classList.remove('open');
+  }
+});
+
+function selectModel(name){
+  const model=USER_MODELS.find(m=>m.name===name);
+  if(!model)return;
+  headerModel.textContent=model.name;
+  sbModelText.textContent=model.name;
+  modelDropdown.classList.remove('open');
+  localStorage.setItem('autorun_model',name);
+  buildModelDropdown();
+  // Notify backend
+  fetch('/api/config/set-model',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:name})
+  }).catch(()=>{});
+  toast('模型已切换: '+model.name);
+}
+
+function updateModelUI(name){
+  // Rebuild dropdown to reflect active state
+  buildModelDropdown();
+}
+
+// ── Settings ──
+function toggleSettings(){
+  const modal=document.getElementById('settingsModal');
+  modal.classList.toggle('open');
+}
+
+function loadSettings(){
+  // Load saved values
+  sApiType.value=localStorage.getItem('autorun_api_type')||'openai';
+  sApiUrl.value=localStorage.getItem('autorun_api_url')||'';
+  sApiKey.value=localStorage.getItem('autorun_api_key')||'';
+  // Restore current model
+  const curModel=localStorage.getItem('autorun_model')||'';
+  if(curModel&&USER_MODELS.find(m=>m.name===curModel)){
+    headerModel.textContent=curModel;
+    sbModelText.textContent=curModel;
+  }
+  buildModelDropdown();
+  renderSavedModelsList();
+}
+
+function saveSettings(){
+  const apiType=sApiType.value;
+  const apiUrl=sApiUrl.value.trim();
+  const apiKey=sApiKey.value.trim();
+  const curModel=localStorage.getItem('autorun_model')||'';
+  localStorage.setItem('autorun_api_type',apiType);
+  localStorage.setItem('autorun_api_url',apiUrl);
+  localStorage.setItem('autorun_api_key',apiKey);
+  // Notify backend with all fields
+  const body={api_type:apiType,api_url:apiUrl,api_key:apiKey};
+  if(curModel)body.model=curModel;
+  fetch('/api/config',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
+  }).catch(()=>{});
+  toggleSettings();
+  toast('设置已保存');
+}
+
+function renderSavedModelsList(){
+  const list=document.getElementById('savedModelsList');
+  if(!list)return;
+  if(USER_MODELS.length===0){
+    list.innerHTML='<span class="hint">尚未添加模型</span>';
+    return;
+  }
+  list.innerHTML=USER_MODELS.map(m=>
+    '<div class="saved-model-item">'+
+      '<span class="sm-name">'+escapeHtml(m.name)+'</span>'+
+      (m.note?'<span class="sm-note">'+escapeHtml(m.note)+'</span>':'')+
+      '<button class="sm-del" onclick="removeUserModel(\''+escapeHtmlAttr(m.name)+'\',event)">×</button>'+
+    '</div>'
+  ).join('');
+}
+
+// ── File Tree ──
+let _fileTreeState={};
+async function loadFileTree(subPath){
+  if(!subPath)subPath='';
+  const tree=document.getElementById('fileTree');
+  if(!subPath){
+    tree.innerHTML='<div class="tree-item" style="color:var(--text-dim);cursor:default"><span style="font-size:10px">加载中...</span></div>';
+  }
+  try{
+    const resp=await fetch('/api/files?path='+encodeURIComponent(subPath));
+    if(!resp.ok){tree.innerHTML='<div class="tree-item" style="color:var(--text-dim)">加载失败</div>';return}
+    const data=await resp.json();
+    if(!subPath){
+      tree.innerHTML='<div class="tree-item" onclick="loadFileTree(\'\')" style="font-weight:600">'+
+        '<svg class="t-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'+
+        '<span class="t-name">'+escapeHtml(data.cwd.split('/').pop()||data.cwd)+'</span></div>';
+      renderTreeItems(tree,data.items,subPath);
+    }
+    return data;
+  }catch(e){
+    if(!subPath)tree.innerHTML='<div class="tree-item" style="color:var(--text-dim)">加载失败</div>';
+  }
+}
+function renderTreeItems(parent,items,basePath){
+  items.forEach(item=>{
+    if(item.is_dir){
+      const div=document.createElement('div');
+      div.innerHTML=
+        '<div class="tree-item folder" data-path="'+escapeHtmlAttr(item.path)+'" onclick="toggleTreeFolder(this)">'+
+          '<span class="t-arrow">▶</span>'+
+          '<svg class="t-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'+
+          '<span class="t-name">'+escapeHtml(item.name)+'</span>'+
+        '</div>'+
+        '<div class="tree-children" data-path="'+escapeHtmlAttr(item.path)+'"></div>';
+      parent.appendChild(div);
+    }else{
+      const div=document.createElement('div');
+      const ext=(item.name.split('.').pop()||'').toLowerCase();
+      const icon=ext==='py'?'🐍':ext==='js'||ext==='ts'?'🟨':ext==='html'?'🌐':ext==='css'?'🎨':ext==='json'?'📋':ext==='md'?'📝':'📄';
+      div.innerHTML=
+        '<div class="tree-item file" data-path="'+escapeHtmlAttr(item.path)+'" onclick="openFileInTree(\''+escapeHtmlAttr(item.path)+'\')" draggable="true" ondragstart="onTreeFileDragStart(event,\''+escapeHtmlAttr(item.path)+'\')" ondragend="onTreeFileDragEnd(event)">'+
+          '<span class="t-arrow" style="visibility:hidden">▶</span>'+
+          '<span style="width:14px;text-align:center;flex-shrink:0;font-size:12px">'+icon+'</span>'+
+          '<span class="t-name">'+escapeHtml(item.name)+'</span>'+
+        '</div>';
+      parent.appendChild(div);
+    }
+  });
+}
+async function toggleTreeFolder(el){
+  const arrow=el.querySelector('.t-arrow');
+  const path=el.dataset.path;
+  const childrenEl=el.parentElement.querySelector('.tree-children');
+  if(!childrenEl)return;
+  if(childrenEl.classList.contains('open')){
+    arrow.classList.remove('open');
+    childrenEl.classList.remove('open');
+    return;
+  }
+  arrow.classList.add('open');
+  childrenEl.classList.add('open');
+  // Lazy load
+  if(childrenEl.children.length===0){
+    childrenEl.innerHTML='<div class="tree-item" style="color:var(--text-dim)">...</div>';
+    try{
+      const resp=await fetch('/api/files?path='+encodeURIComponent(path));
+      const data=await resp.json();
+      childrenEl.innerHTML='';
+      renderTreeItems(childrenEl,data.items,path);
+    }catch(e){childrenEl.innerHTML='<div class="tree-item" style="color:var(--text-dim)">加载失败</div>'}
+  }
+}
+function openFileInTree(path){
+  // Just highlight — don't open in chat
+  document.querySelectorAll('.tree-item.file.active').forEach(el=>el.classList.remove('active'));
+  const el=document.querySelector('.tree-item.file[data-path="'+CSS.escape(path)+'"]');
+  if(el)el.classList.add('active');
+}
+
+// ── Drag & Drop @ file mentions ──
+let _dragFile=null;
+function onTreeFileDragStart(ev,path){
+  _dragFile=path;
+  ev.dataTransfer.effectAllowed='link';
+  ev.dataTransfer.setData('text/plain','@'+path);
+  ev.currentTarget.style.opacity='0.5';
+}
+function onTreeFileDragEnd(ev){
+  ev.currentTarget.style.opacity='';
+  _dragFile=null;
+}
+
+// Input area drop handler
+const inputWrap=document.querySelector('.input-wrap');
+if(inputWrap){
+  inputWrap.addEventListener('dragover',(e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    inputWrap.classList.add('drag-over');
+  });
+  inputWrap.addEventListener('dragleave',(e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    inputWrap.classList.remove('drag-over');
+  });
+  inputWrap.addEventListener('drop',(e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    inputWrap.classList.remove('drag-over');
+    const text=e.dataTransfer.getData('text/plain')||'@'+(_dragFile||'');
+    if(text)insertAtCursor(inputEl,text+' ');
+  });
+}
+
+function escapeHtmlAttr(str){
+  return String(str).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function insertAtCursor(textarea,text){
+  const start=textarea.selectionStart;
+  const end=textarea.selectionEnd;
+  const before=textarea.value.substring(0,start);
+  const after=textarea.value.substring(end);
+  textarea.value=before+text+after;
+  textarea.selectionStart=textarea.selectionEnd=start+text.length;
+  textarea.focus();
+  textarea.dispatchEvent(new Event('input'));
+}
+
+// ── Sidebar ──
+function toggleSidebar(){
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebarOverlay').classList.toggle('open');
+}
+document.getElementById('sidebarOverlay').addEventListener('click',toggleSidebar);
+
+// ── Shortcuts ──
+function showShortcuts(){
+  const t=document.getElementById('shortcutsToast');
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+// ── Utils ──
+function toast(text){
+  const t=document.getElementById('toast');
+  t.textContent=text;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer=setTimeout(()=>t.classList.remove('show'),2000);
+}
+
+function escapeHtml(str){
+  const d=document.createElement('div');
+  d.textContent=str;
+  return d.innerHTML;
+}
+
+function updateMsgCount(){
+  sbMsgCount.textContent=messageCount+' 条消息';
+}
+
+// ── Close modal on overlay click ──
+document.getElementById('settingsModal').addEventListener('click',(e)=>{
+  if(e.target===e.currentTarget)toggleSettings();
+});
+</script>
+</body>
+</html>
