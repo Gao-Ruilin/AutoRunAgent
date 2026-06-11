@@ -133,8 +133,16 @@ input:focus,select:focus{outline:none;border-color:#58a6ff}
 </div>
 <script>
 var ws;
+var wsReady=false;
+function _safeSend(data){
+  if(ws&&ws.readyState===WebSocket.OPEN){
+    ws.send(JSON.stringify(data));
+  }
+}
 function connect(){
   ws=new WebSocket('ws://'+location.host+'/ws');
+  ws.onopen=function(){wsReady=true;_safeSend({type:'refresh'});};
+  ws.onclose=function(){wsReady=false;setTimeout(connect,3000);};
   ws.onmessage=function(e){
     try{
       var d=JSON.parse(e.data);
@@ -221,7 +229,7 @@ function sendChat(){
   var t=inp.value.trim();
   if(!t)return;
   addChatMsg('user',t);
-  ws.send(JSON.stringify({type:'chat',text:t}));
+  _safeSend({type:'chat',text:t});
   inp.value='';
 }
 function addTrigger(){
@@ -232,7 +240,7 @@ function addTrigger(){
   var alarmTime=document.getElementById('trig-alarm-time').value.trim();
   var prompt=document.getElementById('trig-prompt').value.trim();
   if(!name){alert('Please enter a name.');return;}
-  ws.send(JSON.stringify({
+  _safeSend({
     type:'add_trigger',
     trig_type:type,
     name:name,
@@ -245,7 +253,7 @@ function addTrigger(){
   setTimeout(function(){document.getElementById('add-trigger-result').innerHTML='';},3000);
 }
 function deleteTrigger(id){
-  ws.send(JSON.stringify({type:'delete_trigger',id:id}));
+  _safeSend({type:'delete_trigger',id:id});
 }
 function onTrigTypeChange(){
   var type=document.getElementById('trig-type').value;
@@ -268,12 +276,12 @@ document.querySelectorAll('.nav-item').forEach(function(el){
     el.classList.add('active');
     document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active')});
     document.getElementById('panel-'+el.dataset.panel).classList.add('active');
-    ws.send(JSON.stringify({type:'refresh',panel:el.dataset.panel}));
+    _safeSend({type:'refresh',panel:el.dataset.panel});
   };
 });
 connect();
 setInterval(function(){
-  if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'refresh'}));
+  _safeSend({type:'refresh'});
 },5000);
 </script>
 </body>
@@ -321,6 +329,10 @@ class DaemonWebUI:
         @app.get("/", response_class=HTMLResponse)
         async def index():
             return DAEMON_WEBUI_HTML
+
+        @app.get("/favicon.ico")
+        async def favicon():
+            return JSONResponse(None, status_code=204)
 
         @app.get("/api/status")
         async def get_status():
