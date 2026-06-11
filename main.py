@@ -214,6 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
               autorun                   启动 Web UI 并在浏览器打开
               autorun --web             启动 Web UI（同默认）
               autorun --setup           重新配置 API 设置
+              autorun --daemon          启动守护模式（后台运行）
               autorun -m gpt-4o         使用指定模型启动
               autorun --port 8080       指定端口启动
         """),
@@ -236,6 +237,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="web_ui",
         help="启动 Web UI 服务器（Win7 默认模式）",
+    )
+    parser.add_argument(
+        "--daemon",
+        action="store_true",
+        dest="daemon_mode",
+        help="启动守护模式（后台运行，悬浮球 + 独立 WebUI）",
+    )
+    parser.add_argument(
+        "--daemon-no-ball",
+        action="store_true",
+        dest="daemon_no_ball",
+        help="守护模式不启动悬浮球",
+    )
+    parser.add_argument(
+        "--daemon-port",
+        type=int,
+        dest="daemon_port",
+        default=8766,
+        help="守护模式 WebUI 端口（默认: 8766）",
     )
     parser.add_argument(
         "--port",
@@ -358,6 +378,30 @@ def cli_main() -> None:
 
     # ── Register LSP cleanup ──────────────────────────────────────────────
     atexit.register(_cleanup_lsp)
+
+    # ── Daemon mode ──────────────────────────────────────────────────────
+    if args.daemon_mode:
+        import subprocess
+        daemon_script = os.path.join(os.path.dirname(__file__), "daemon", "run_daemon.py")
+        cmd = [sys.executable, daemon_script]
+        if args.daemon_no_ball:
+            cmd.append("--no-ball")
+        if args.daemon_port:
+            cmd.extend(["--port", str(args.daemon_port)])
+        
+        if sys.platform == "win32":
+            # Windows: 隐藏窗口后台运行
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            proc = subprocess.Popen(cmd, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            proc = subprocess.Popen(cmd, start_new_session=True)
+        
+        print(f"守护模式已启动 (PID: {proc.pid})")
+        print(f"  WebUI: http://127.0.0.1:{args.daemon_port}")
+        print("  悬浮球已启动（查看右下角）")
+        print("  使用 'taskkill /PID {0}' 或通过悬浮球退出".format(proc.pid) if sys.platform == "win32" else "  使用 'kill {0}' 或通过悬浮球退出".format(proc.pid))
+        return
 
     # ── Web UI mode (default for Win7) ────────────────────────────────────
     from AutoRUN_v1.ui.web.server import start_web_server

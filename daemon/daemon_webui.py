@@ -296,7 +296,7 @@ class DaemonWebUI:
         ui.run_sync()         # blocking (convenience)
     """
 
-    def __init__(self, daemon_core=None, host: str = "127.0.0.1", port: int = 8765):
+    def __init__(self, daemon_core=None, host: str = "127.0.0.1", port: int = 8766):
         self._core = daemon_core
         self._host = host
         self._port = port
