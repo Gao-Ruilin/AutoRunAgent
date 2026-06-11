@@ -67,9 +67,12 @@ def _run_ball(core):
         from daemon.daemon_ball import DaemonBall
         logger.info("启动悬浮球...")
         DaemonBall.run(core)
+    except SystemExit:
+        logger.info("悬浮球正常退出")
     except Exception as e:
-        logger.error("悬浮球启动失败: %s", e, exc_info=True)
-        print(f"[警告] 悬浮球启动失败（PyQt5 可能未正确安装或显示不可用）: {e}", file=sys.stderr)
+        logger.error("悬浮球启动失败（PyQt5 可能未正确安装或显示不可用）: %s", e)
+        print(f"\n[警告] 悬浮球启动失败: {e}", file=sys.stderr)
+        print("[提示] 可通过 WebUI (http://127.0.0.1:8766) 管理守护模式", file=sys.stderr)
 
 
 async def main(no_ball=False, no_webui=False, port=8766):

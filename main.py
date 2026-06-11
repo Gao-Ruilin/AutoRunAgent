@@ -387,18 +387,47 @@ def cli_main() -> None:
         if args.daemon_port:
             cmd.extend(["--port", str(args.daemon_port)])
         
+        # 日志文件路径
+        daemon_log_dir = os.path.join(os.path.expanduser("~"), ".autorun", "daemon")
+        os.makedirs(daemon_log_dir, exist_ok=True)
+        daemon_log = os.path.join(daemon_log_dir, "daemon.log")
+        log_fh = open(daemon_log, "a", encoding="utf-8")
+        import datetime as _dt
+        log_fh.write(f"\n{'='*60}\n")
+        log_fh.write(f"Daemon started at {_dt.datetime.now()}\n")
+        log_fh.write(f"Command: {' '.join(cmd)}\n")
+        log_fh.flush()
+
         if sys.platform == "win32":
-            # Windows: 隐藏窗口后台运行
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            proc = subprocess.Popen(cmd, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+            proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
         else:
-            proc = subprocess.Popen(cmd, start_new_session=True)
+            proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh,
+                                    start_new_session=True)
         
         print(f"守护模式已启动 (PID: {proc.pid})")
         print(f"  WebUI: http://127.0.0.1:{args.daemon_port}")
-        print("  悬浮球已启动（查看右下角）")
-        print("  使用 'taskkill /PID {0}' 或通过悬浮球退出".format(proc.pid) if sys.platform == "win32" else "  使用 'kill {0}' 或通过悬浮球退出".format(proc.pid))
+        print(f"  日志（诊断）: {daemon_log}")
+
+        # 等待 2 秒检查是否正常启动
+        import time as _time
+        _time.sleep(2)
+        poll = proc.poll()
+        if poll is not None:
+            print(f"\n[错误] 守护模式启动失败 (退出码: {poll})")
+            print(f"请查看日志: {daemon_log}")
+            try:
+                with open(daemon_log, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    for line in lines[-8:]:
+                        print(f"  {line.rstrip()}")
+            except Exception:
+                pass
+        else:
+            print("  进程运行正常")
+            msg = f"  退出: taskkill /PID {proc.pid}" if sys.platform == "win32" else f"  退出: kill {proc.pid}"
+            print(msg)
+        log_fh.close()
         return
 
     # ── Web UI mode ────────────────────────────────────────────────────────
