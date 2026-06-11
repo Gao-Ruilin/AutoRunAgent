@@ -19,6 +19,24 @@ import os
 import signal
 import sys
 import threading
+from pathlib import Path
+
+# ── 设置包路径（与 main.py 相同的机制）───────────────────────────────────────
+_project_root = str(Path(__file__).resolve().parent.parent)
+if "AutoRUN_v1" not in sys.modules:
+    import types as _types
+    _pkg = _types.ModuleType("AutoRUN_v1")
+    _pkg.__file__ = str(Path(_project_root, "__init__.py"))
+    _pkg.__path__ = [_project_root]
+    _pkg.__package__ = "AutoRUN_v1"
+    sys.modules["AutoRUN_v1"] = _pkg
+    _init_path = str(Path(_project_root, "__init__.py"))
+    try:
+        with open(_init_path, "rb") as _f:
+            _code = compile(_f.read(), _init_path, "exec")
+            exec(_code, _pkg.__dict__)
+    except FileNotFoundError:
+        pass
 
 # 设置 UTF-8 编码
 if sys.platform == "win32":
@@ -45,9 +63,13 @@ async def _run_webui(core, port=8765):
 
 def _run_ball(core):
     """在独立线程启动悬浮球（PyQt 必须主线程）。"""
-    from daemon.daemon_ball import DaemonBall
-    logger.info("启动悬浮球...")
-    DaemonBall.run(core)
+    try:
+        from daemon.daemon_ball import DaemonBall
+        logger.info("启动悬浮球...")
+        DaemonBall.run(core)
+    except Exception as e:
+        logger.error("悬浮球启动失败: %s", e, exc_info=True)
+        print(f"[警告] 悬浮球启动失败（PyQt5 可能未正确安装或显示不可用）: {e}", file=sys.stderr)
 
 
 async def main(no_ball=False, no_webui=False, port=8766):
