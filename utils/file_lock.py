@@ -171,7 +171,7 @@ class FileLock:
             result = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}"],
                 capture_output=True,
-                text=True,
+                text=True, encoding='utf-8', errors='replace',
                 timeout=5,
             )
             return str(pid) in result.stdout

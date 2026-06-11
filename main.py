@@ -22,6 +22,7 @@ from pathlib import Path
 # ── Windows UTF-8 setup (must run at module import time, before any output) ──
 if sys.platform == "win32":
     os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     for _stream in (sys.stdout, sys.stderr):
         try:
             if hasattr(_stream, 'reconfigure'):

@@ -20,7 +20,7 @@ def _cached_get_git() -> bool:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--git-dir"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
         )
         return result.returncode == 0
     except Exception:
@@ -32,7 +32,7 @@ def _get_git_branch() -> Optional[str]:
     try:
         result = subprocess.run(
             ["git", "branch", "--show-current"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -46,7 +46,7 @@ def _get_git_default_branch() -> Optional[str]:
         for branch in ["origin/main", "origin/master"]:
             result = subprocess.run(
                 ["git", "rev-parse", "--verify", branch],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
             )
             if result.returncode == 0:
                 return branch.replace("origin/", "")
@@ -60,7 +60,7 @@ def _get_git_status() -> Optional[str]:
     try:
         result = subprocess.run(
             ["git", "--no-optional-locks", "status", "--short"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
         )
         if result.returncode == 0:
             status = result.stdout.strip()
@@ -79,7 +79,7 @@ def _get_git_log() -> Optional[str]:
     try:
         result = subprocess.run(
             ["git", "--no-optional-locks", "log", "--oneline", "-n", "5"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -92,7 +92,7 @@ def _get_git_user() -> Optional[str]:
     try:
         result = subprocess.run(
             ["git", "config", "user.name"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
         )
         if result.returncode == 0:
             return result.stdout.strip()

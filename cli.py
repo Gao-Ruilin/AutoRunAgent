@@ -40,6 +40,7 @@ def _setup_windows_utf8() -> None:
     import io as _io
     # PYTHONUTF8 ensures subprocesses and the Python runtime use UTF-8
     os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     # Reconfigure stdio for UTF-8
     for _stream in (sys.stdout, sys.stderr):
         try:

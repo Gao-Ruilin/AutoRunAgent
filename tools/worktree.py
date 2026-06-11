@@ -86,7 +86,7 @@ class EnterWorktreeTool(Tool):
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "--git-dir"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
             )
             if result.returncode != 0:
                 return ToolResult(
@@ -113,7 +113,7 @@ class EnterWorktreeTool(Tool):
             # Create worktree
             result = subprocess.run(
                 ["git", "worktree", "add", "-b", worktree_name, worktree_dir],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
             )
             if result.returncode != 0:
                 return ToolResult(
@@ -212,7 +212,7 @@ class ExitWorktreeTool(Tool):
                 try:
                     result = subprocess.run(
                         ["git", "status", "--porcelain"],
-                        capture_output=True, text=True, timeout=10,
+                        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10,
                         cwd=worktree_path,
                     )
                     if result.stdout.strip():
@@ -229,7 +229,7 @@ class ExitWorktreeTool(Tool):
             try:
                 result = subprocess.run(
                     ["git", "worktree", "remove", "--force", worktree_path],
-                    capture_output=True, text=True, timeout=30,
+                    capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
                 )
                 msg = f"Worktree '{worktree_name}' removed."
                 if result.returncode != 0:
@@ -241,7 +241,7 @@ class ExitWorktreeTool(Tool):
             try:
                 subprocess.run(
                     ["git", "branch", "-D", worktree_name],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10,
                 )
             except Exception:
                 logger.warning("Failed to delete git branch after worktree removal: %s", worktree_name, exc_info=True)
