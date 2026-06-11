@@ -198,6 +198,10 @@ a:hover{color:var(--accent-hover)}
 .saved-models-list{display:flex;flex-direction:column;gap:4px;max-height:140px;overflow-y:auto}
 .saved-model-item{display:flex;align-items:center;gap:6px;padding:5px 8px;background:var(--bg-input);border-radius:var(--radius-sm);font-size:12px}
 .saved-model-item .sm-name{flex:1;font-weight:500;color:var(--text-primary)}
+.saved-model-item .sm-tag{font-size:9px;padding:1px 5px;border-radius:8px;margin:0 2px;flex-shrink:0}
+.saved-model-item .sm-tag.url{background:rgba(88,166,255,0.12);color:var(--accent)}
+.saved-model-item .sm-tag.type{background:rgba(63,185,80,0.12);color:#3fb950}
+.saved-model-item .sm-tag.key{background:rgba(240,160,48,0.12);color:#f0a030}
 .saved-model-item .sm-note{font-size:10px;color:var(--text-dim)}
 .saved-model-item .sm-del{width:18px;height:18px;border:none;background:none;color:var(--text-dim);cursor:pointer;border-radius:2px;display:flex;align-items:center;justify-content:center}
 .saved-model-item .sm-del svg{width:10px;height:10px}
@@ -836,6 +840,20 @@ a:hover{color:var(--accent-hover)}
         <input type="text" id="sModelName" placeholder="例如 gpt-4o, claude-sonnet-4-6" data-i18n-ph="modelNamePlaceholder">
       </div>
       <div class="modal-field">
+        <label for="sModelUrl">API URL（留空则用全局）</label>
+        <input type="text" id="sModelUrl" placeholder="https://api.openai.com">
+      </div>
+      <div class="modal-field model-advanced" style="display:flex;gap:8px">
+        <div style="flex:1">
+          <label for="sModelType">API 类型</label>
+          <select id="sModelType"><option value="">默认</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select>
+        </div>
+        <div style="flex:2">
+          <label for="sModelKey">专属 API Key（留空则用全局）</label>
+          <input type="password" id="sModelKey" placeholder="sk-...">
+        </div>
+      </div>
+      <div class="modal-field">
         <label for="sModelNote" data-i18n="modelNote">备注</label>
         <input type="text" id="sModelNote" placeholder="例如：默认模型、快速轻量..." data-i18n-ph="modelNotePlaceholder">
       </div>
@@ -1469,17 +1487,24 @@ function saveUserModels(){
 function addUserModel(){
   const nameEl=document.getElementById('sModelName');
   const noteEl=document.getElementById('sModelNote');
+  const urlEl=document.getElementById('sModelUrl');
+  const typeEl=document.getElementById('sModelType');
+  const keyEl=document.getElementById('sModelKey');
   const name=nameEl.value.trim();
   if(!name){toast(t('modelNamePlaceholder'));return}
+  // build model entry
+  const entry={name:name,note:noteEl.value.trim()};
+  const url=urlEl.value.trim(); if(url)entry.api_url=url;
+  const type=typeEl.value; if(type)entry.api_type=type;
+  const key=keyEl.value.trim(); if(key)entry.api_key=key;
   // replace if exists
   const idx=USER_MODELS.findIndex(m=>m.name===name);
-  if(idx>=0){USER_MODELS[idx].note=noteEl.value.trim()}else{USER_MODELS.push({name:name,note:noteEl.value.trim()})}
+  if(idx>=0){USER_MODELS[idx]=entry}else{USER_MODELS.push(entry)}
   saveUserModels();
   buildModelDropdown();
   renderSavedModelsList();
-  nameEl.value='';
-  noteEl.value='';
-  toast(t('modelAdded')+name);
+  nameEl.value='';noteEl.value='';urlEl.value='';typeEl.value='';keyEl.value='';
+  toast('已添加: '+name);
 }
 function removeUserModel(name,ev){
   if(ev)ev.stopPropagation();
@@ -2567,11 +2592,15 @@ function selectModel(name){
   modelDropdown.classList.remove('open');
   localStorage.setItem('autorun_model',name);
   buildModelDropdown();
-  // Notify backend
+  // Notify backend with per-model config
+  const body={model:name};
+  if(model.api_url) body.api_url=model.api_url;
+  if(model.api_type) body.api_type=model.api_type;
+  if(model.api_key) body.api_key=model.api_key;
   fetch('/api/config/set-model',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:name})
+    body:JSON.stringify(body)
   }).catch(e=>{console.error('Failed to set model on backend:',e);});
   toast(t('modelSwitched')+model.name);
 }
@@ -2702,13 +2731,18 @@ function renderSavedModelsList(){
     list.innerHTML='<span class="hint">'+t('noSaved')+'</span>';
     return;
   }
-  list.innerHTML=USER_MODELS.map(m=>
-    '<div class="saved-model-item">'+
+  list.innerHTML=USER_MODELS.map(m=>{
+    let extra='';
+    if(m.api_url) extra+=' <span class="sm-tag url">'+escapeHtml(m.api_url.replace('https://','').split('/')[0])+'</span>';
+    if(m.api_type) extra+=' <span class="sm-tag type">'+escapeHtml(m.api_type)+'</span>';
+    if(m.api_key) extra+=' <span class="sm-tag key">专属Key</span>';
+    return '<div class="saved-model-item">'+
       '<span class="sm-name">'+escapeHtml(m.name)+'</span>'+
+      extra+
       (m.note?'<span class="sm-note">'+escapeHtml(m.note)+'</span>':'')+
       '<button class="sm-del" onclick="removeUserModel(\''+escapeHtmlAttr(m.name)+'\',event)"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>'+
-    '</div>'
-  ).join('');
+    '</div>';
+  }).join('');
 }
 
 // ── File Tree ──

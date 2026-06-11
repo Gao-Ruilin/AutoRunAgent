@@ -36,6 +36,48 @@ def _cleanup_finished():
 class BashTool(Tool):
     """Non-blocking bash/shell command executor."""
 
+    @staticmethod
+    def _find_bash() -> str:
+        """Find a suitable bash executable for the current platform.
+        
+        On Windows, prefers Git Bash over WSL bash.
+        Returns the path or 'bash' if not found.
+        """
+        if sys.platform == "win32":
+            # Priority: Git Bash → any bash in PATH (but NOT WSL bash in System32)
+            candidates = [
+                r"C:\Program Files\Git\bin\bash.exe",
+                r"C:\Program Files (x86)\Git\bin\bash.exe",
+                r"C:\Git\bin\bash.exe",
+                os.path.expanduser(r"~\AppData\Local\Programs\Git\bin\bash.exe"),
+            ]
+            for c in candidates:
+                if os.path.isfile(c):
+                    return c
+            # Search PATH but exclude System32 (WSL bash)
+            for p in os.environ.get("PATH", "").split(os.pathsep):
+                p = p.strip()
+                if not p:
+                    continue
+                # Skip Windows system directories — these contain WSL's bash
+                lower_p = p.lower()
+                if "system32" in lower_p or "syswow64" in lower_p:
+                    continue
+                candidate = os.path.join(p, "bash.exe")
+                if os.path.isfile(candidate):
+                    return candidate
+            # Last resort: try plain 'bash' (but warn if it might be WSL)
+            return "bash"
+        return "bash"  # macOS/Linux: use system bash
+
+    @staticmethod
+    def _get_shell_cmd() -> str:
+        """Get the shell command line for subprocess spawning."""
+        bash = BashTool._find_bash()
+        if sys.platform == "win32":
+            return f'"{bash}" -c'
+        return bash
+
     @property
     def name(self) -> str:
         return "Bash"
@@ -200,7 +242,13 @@ class BashTool(Tool):
             )
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-            process = await asyncio.create_subprocess_shell(command, **kwargs)
+                # On Windows, use Git Bash explicitly (not cmd.exe via create_subprocess_shell)
+                bash = BashTool._find_bash()
+                process = await asyncio.create_subprocess_exec(
+                    bash, "-c", command, **kwargs
+                )
+            else:
+                process = await asyncio.create_subprocess_shell(command, **kwargs)
         except Exception as e:
             return ToolResult(data=f"Failed to start process: {e}", is_error=True)
 
@@ -394,14 +442,24 @@ class BashTool(Tool):
                               cwd: str) -> ToolResult:
         """Run a command in the background, returning immediately."""
         try:
-            process = subprocess.Popen(
-                command,
-                shell=True,
-                cwd=cwd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                preexec_fn=None if sys.platform == "win32" else os.setsid,
-            )
+            if sys.platform == "win32":
+                bash = BashTool._find_bash()
+                process = subprocess.Popen(
+                    [bash, "-c", command],
+                    cwd=cwd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                )
+            else:
+                process = subprocess.Popen(
+                    command,
+                    shell=True,
+                    cwd=cwd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    preexec_fn=os.setsid,
+                )
             return ToolResult(
                 data=f"Command started in background (PID: {process.pid}): {description}",
                 is_error=False,
