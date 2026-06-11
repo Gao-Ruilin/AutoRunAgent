@@ -132,6 +132,7 @@ input:focus,select:focus{outline:none;border-color:#58a6ff}
   </div>
 </div>
 <script>
+// v=2
 var ws;
 var wsReady=false;
 function _safeSend(data){
@@ -248,7 +249,7 @@ function addTrigger(){
     alarm_type:alarmType,
     alarm_time:alarmTime,
     prompt:prompt
-  }));
+  });
   document.getElementById('add-trigger-result').innerHTML='<span style="color:#3fb950">Trigger added.</span>';
   setTimeout(function(){document.getElementById('add-trigger-result').innerHTML='';},3000);
 }
@@ -270,6 +271,7 @@ function formatElapsed(secs){
   return s+'s';
 }
 // Navigation
+document.addEventListener('DOMContentLoaded',function(){
 document.querySelectorAll('.nav-item').forEach(function(el){
   el.onclick=function(){
     document.querySelectorAll('.nav-item').forEach(function(e){e.classList.remove('active')});
@@ -283,6 +285,7 @@ connect();
 setInterval(function(){
   _safeSend({type:'refresh'});
 },5000);
+}); // DOMContentLoaded
 </script>
 </body>
 </html>"""
@@ -328,7 +331,12 @@ class DaemonWebUI:
 
         @app.get("/", response_class=HTMLResponse)
         async def index():
-            return DAEMON_WEBUI_HTML
+            from fastapi.responses import Response
+            return Response(
+                content=DAEMON_WEBUI_HTML,
+                media_type="text/html",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+            )
 
         @app.get("/favicon.ico")
         async def favicon():
