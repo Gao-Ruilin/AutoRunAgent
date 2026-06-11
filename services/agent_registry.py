@@ -96,10 +96,23 @@ def _load_agents_from_dir(agents: Dict[str, Dict[str, Any]],
             pass
 
 
+# 自动注入到所有 Agent 模板的通用规则
+_AGENT_COMMON_RULES = """
+
+## 通用限制（自动注入）
+- **禁止使用 Agent 工具**: 绝不能创建子代理委托任务。若将任务再次委托，会导致无限嵌套和死循环
+- **禁止使用 Workflow(name, steps) 创建**: 不要创建新工作流
+- **工具调用失败处理**: 同一工具连续失败 3 次以上时，停止重试并汇报失败"""
+
+
 def get_agent(name: str) -> Optional[Dict[str, Any]]:
-    """按名称获取特定 Agent 模板。"""
+    """按名称获取特定 Agent 模板。自动注入通用限制规则。"""
     agents = discover_agents()
-    return agents.get(name)
+    agent = agents.get(name)
+    if agent and _AGENT_COMMON_RULES not in agent.get("system_prompt", ""):
+        agent = dict(agent)
+        agent["system_prompt"] = agent.get("system_prompt", "") + _AGENT_COMMON_RULES
+    return agent
 
 
 def list_agent_names() -> List[str]:
