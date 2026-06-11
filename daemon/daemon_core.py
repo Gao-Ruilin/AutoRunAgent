@@ -167,6 +167,11 @@ class DaemonCore:
         # 启动时的初始触发（启动即是第一次检查）
         self._needs_initial_trigger: bool = True
 
+        # 崩溃恢复 / 看门狗
+        self._crash_count: int = 0
+        self._max_crash_restarts: int = 3
+        self._watchdog_enabled: bool = True
+
         # 注册触发器回调
         self.triggers.on_trigger(self._on_trigger_fired)
 
@@ -192,6 +197,7 @@ class DaemonCore:
                 self._api_call_count = data.get("api_call_count", 0)
                 self._trigger_count = data.get("trigger_count", 0)
                 self._task_count = data.get("task_count", 0)
+                self._crash_count = data.get("crash_count", 0)
 
                 # 恢复未完成的任务
                 for task_data in data.get("pending_tasks", []):
@@ -231,6 +237,7 @@ class DaemonCore:
                 "trigger_count": self._trigger_count,
                 "task_count": self._task_count,
                 "started_at": self._started_at,
+                "crash_count": self._crash_count,
                 "saved_at": time.time(),
                 "pending_tasks": [
                     t.to_dict() for t in self._tasks.values()
@@ -255,8 +262,25 @@ class DaemonCore:
             logger.warning("DaemonCore already running")
             return
 
+        if self._crash_count >= self._max_crash_restarts:
+            logger.error(
+                "Max crash restarts reached (%d/%d), refusing to start",
+                self._crash_count, self._max_crash_restarts,
+            )
+            self._set_state(DaemonState.ERROR)
+            return
+
         self._set_state(DaemonState.STARTING)
+        self._stop_event.clear()
         self._started_at = time.time()
+        self._needs_initial_trigger = True
+
+        # 清理孤儿进程
+        await self._cleanup_orphans()
+
+        # 重置 crash 计数（成功启动后）
+        self._crash_count = 0
+        self._save_state()
 
         # 记忆系统记录启动
         self.memory.add(
@@ -265,12 +289,7 @@ class DaemonCore:
             tags=["lifecycle", "startup"],
         )
 
-        # 保存初始状态
-        self._save_state()
-        self.memory.save()
-
         # 启动 Agent Loop
-        self._stop_event.clear()
         self._loop_task = asyncio.create_task(self._agent_loop())
         self._set_state(DaemonState.RUNNING)
 
@@ -311,6 +330,20 @@ class DaemonCore:
         )
 
         logger.info("DaemonCore stopped")
+
+    async def _cleanup_orphans(self) -> None:
+        """清理上次遗留的孤儿子进程。"""
+        for task in list(self._tasks.values()):
+            if task.state == "running":
+                # 检查进程是否还存在
+                if not self._is_process_alive(task.pid):
+                    task.state = "crashed"
+                    task.error = "Orphan process cleaned up on startup"
+                    task.finished_at = time.time()
+                    logger.warning(
+                        "Cleaned up orphan task %s (pid=%d)", task.id, task.pid,
+                    )
+        self._save_state()
 
     def _set_state(self, new_state: DaemonState) -> None:
         """设置状态并通知回调。"""
@@ -398,14 +431,26 @@ class DaemonCore:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error("Agent loop error: %s", e, exc_info=True)
-                self.memory.add(
-                    f"Agent Loop 发生错误: {str(e)[:500]}",
-                    source="error",
-                    tags=["error", "loop"],
-                )
-                # 短暂等待后重试，避免错误风暴
-                await asyncio.sleep(5.0)
+                logger.error("Agent loop crashed: %s", e, exc_info=True)
+                self._crash_count += 1
+                self._save_state()
+
+                if self._crash_count < self._max_crash_restarts:
+                    logger.info(
+                        "Restarting daemon (attempt %d/%d)",
+                        self._crash_count, self._max_crash_restarts,
+                    )
+                    await asyncio.sleep(5)
+                    await self.start()  # 自动重启
+                else:
+                    self._set_state(DaemonState.ERROR)
+                    self.memory.add(
+                        f"守护进程崩溃，已达最大重启次数 ({self._crash_count}/{self._max_crash_restarts})",
+                        source="error",
+                        tags=["crash", "fatal"],
+                    )
+                    logger.error("Max restarts reached, daemon stopped")
+                    break
 
         logger.info("Agent loop ended")
 
@@ -708,11 +753,22 @@ sys.exit(0)
     @staticmethod
     def _is_process_alive(pid: int) -> bool:
         """检查进程是否存活。"""
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
+        if pid <= 0:
             return False
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x0400, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            try:
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
 
     # ── Status / Info ────────────────────────────────────────────────────────────
 
@@ -762,6 +818,135 @@ sys.exit(0)
         )
         # 立即触发一次检查
         self._needs_initial_trigger = True
+
+    # ── Auto-start ─────────────────────────────────────────────────────────────────
+
+    def enable_autostart(self) -> bool:
+        """启用开机自启。"""
+        import sys
+        autorun_path = sys.executable
+        daemon_script = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "run_daemon.py",
+        )
+
+        if sys.platform == "win32":
+            # Windows: 注册表 Run 键
+            import winreg
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Run",
+                    0, winreg.KEY_SET_VALUE,
+                )
+                winreg.SetValueEx(
+                    key, "AutoRUN_Daemon", 0, winreg.REG_SZ,
+                    f'"{autorun_path}" "{daemon_script}"',
+                )
+                winreg.CloseKey(key)
+                logger.info("Auto-start enabled (Windows Registry)")
+                return True
+            except Exception as e:
+                logger.error("Failed to enable autostart: %s", e)
+                return False
+
+        elif sys.platform == "darwin":
+            # macOS: LaunchAgent
+            plist_dir = os.path.expanduser("~/Library/LaunchAgents")
+            os.makedirs(plist_dir, exist_ok=True)
+            plist_path = os.path.join(plist_dir, "com.autorun.daemon.plist")
+            plist_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.autorun.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{autorun_path}</string>
+        <string>{daemon_script}</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+</dict>
+</plist>'''
+            try:
+                with open(plist_path, "w") as f:
+                    f.write(plist_content)
+                logger.info("Auto-start enabled (macOS LaunchAgent)")
+                return True
+            except Exception as e:
+                logger.error("Failed to enable autostart: %s", e)
+                return False
+
+        else:
+            # Linux: autostart .desktop
+            autostart_dir = os.path.expanduser("~/.config/autostart")
+            os.makedirs(autostart_dir, exist_ok=True)
+            desktop_path = os.path.join(
+                autostart_dir, "autorun-daemon.desktop",
+            )
+            desktop_content = f"""[Desktop Entry]
+Type=Application
+Name=AutoRUN Daemon
+Exec={autorun_path} {daemon_script}
+X-GNOME-Autostart-enabled=true
+"""
+            try:
+                with open(desktop_path, "w") as f:
+                    f.write(desktop_content)
+                os.chmod(desktop_path, 0o755)
+                logger.info("Auto-start enabled (Linux autostart)")
+                return True
+            except Exception as e:
+                logger.error("Failed to enable autostart: %s", e)
+                return False
+
+    def disable_autostart(self) -> bool:
+        """禁用开机自启。"""
+        import sys
+
+        if sys.platform == "win32":
+            import winreg
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Run",
+                    0, winreg.KEY_SET_VALUE,
+                )
+                winreg.DeleteValue(key, "AutoRUN_Daemon")
+                winreg.CloseKey(key)
+                return True
+            except FileNotFoundError:
+                return True  # Already not set
+            except Exception as e:
+                logger.error("Failed to disable autostart: %s", e)
+                return False
+
+        elif sys.platform == "darwin":
+            plist_path = os.path.expanduser(
+                "~/Library/LaunchAgents/com.autorun.daemon.plist",
+            )
+            try:
+                os.unlink(plist_path)
+                return True
+            except FileNotFoundError:
+                return True
+            except Exception as e:
+                logger.error("Failed to disable autostart: %s", e)
+                return False
+
+        else:
+            desktop_path = os.path.expanduser(
+                "~/.config/autostart/autorun-daemon.desktop",
+            )
+            try:
+                os.unlink(desktop_path)
+                return True
+            except FileNotFoundError:
+                return True
+            except Exception as e:
+                logger.error("Failed to disable autostart: %s", e)
+                return False
 
 
 # ── Singleton (optional) ────────────────────────────────────────────────────────

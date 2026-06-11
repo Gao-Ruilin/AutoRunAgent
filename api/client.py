@@ -619,14 +619,18 @@ def _convert_anthropic_usage(usage: Dict[str, Any]) -> Dict[str, Any]:
 
 # ── Factory ──────────────────────────────────────────────────────────────────
 
-def create_client() -> Any:
-    """根据配置创建适当的 API 客户端。"""
+def create_client(model_override: Optional[str] = None) -> Any:
+    """根据配置创建适当的 API 客户端。
+    
+    如果提供 model_override，使用该模型专属的 api_url/api_type。
+    否则使用当前全局模型。
+    """
     _ensure_configured()
 
-    api_type = get_api_type()
-    api_key = get_api_key()
-    api_url = get_api_url()
-    model = get_model()
+    model = model_override or get_model()
+    api_type = get_api_type(model)
+    api_key = get_api_key(model)
+    api_url = get_api_url(model)
 
     if api_type == "openai":
         return OpenAICompatibleClient(api_key, api_url, model)

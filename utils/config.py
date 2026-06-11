@@ -12,7 +12,7 @@
 
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .env_utils import get_autorun_config_dir
 from .file_lock import FileLock
@@ -55,11 +55,15 @@ def set_setting(key: str, value: Any) -> None:
     save_global_config(config)
 
 
-def get_api_key() -> Optional[str]:
-    """获取 API Key。检查: AUTORUN_API_KEY 环境变量 -> config.json。"""
+def get_api_key(model: Optional[str] = None) -> Optional[str]:
+    """获取 API Key。检查: 环境变量 -> 模型专属 key -> 全局 config.json。"""
     key = os.environ.get("AUTORUN_API_KEY")
     if key:
         return key
+    if model:
+        mc = _get_model_entry(model)
+        if mc and mc.get("api_key"):
+            return mc["api_key"]
     return get_setting("api_key")
 
 
@@ -67,11 +71,15 @@ def save_api_key(key: str) -> None:
     set_setting("api_key", key)
 
 
-def get_api_url() -> Optional[str]:
-    """获取 API URL。检查: AUTORUN_API_URL 环境变量 -> config.json。"""
+def get_api_url(model: Optional[str] = None) -> Optional[str]:
+    """获取 API URL。检查: 环境变量 -> 模型专属 URL -> 全局 config.json。"""
     url = os.environ.get("AUTORUN_API_URL")
     if url:
         return url
+    if model:
+        mc = _get_model_entry(model)
+        if mc and mc.get("api_url"):
+            return mc["api_url"]
     return get_setting("api_url")
 
 
@@ -89,6 +97,139 @@ def get_model() -> Optional[str]:
 
 def set_model(model: str) -> None:
     set_setting("model", model)
+
+
+# ── 模型列表管理（每个模型可有独立的 api_url / api_type / api_key）─────────────
+
+def _get_model_entry(name: str) -> Optional[Dict[str, Any]]:
+    """在 models 数组中按名称查找模型。"""
+    models = get_setting("models", [])
+    for m in models:
+        if isinstance(m, dict) and m.get("name") == name:
+            return m
+    return None
+
+
+def get_models() -> List[Dict[str, Any]]:
+    """获取模型列表（含每个模型的 url/type/key）。自动迁移旧格式。"""
+    models = get_setting("models", [])
+    if not models:
+        models = _migrate_user_models()
+    # 确保当前模型在列表中
+    current = get_model()
+    if current:
+        found = False
+        for m in models:
+            if isinstance(m, dict) and m.get("name") == current:
+                found = True
+                break
+        if not found:
+            entry: Dict[str, Any] = {"name": current}
+            api_url = get_setting("api_url")
+            if api_url:
+                entry["api_url"] = api_url
+            api_type = get_setting("api_type")
+            if api_type:
+                entry["api_type"] = api_type
+            models.append(entry)
+            _save_models(models)
+    return models
+
+
+def _save_models(models: List[Dict[str, Any]]) -> None:
+    """保存模型列表到 config.json 的 models 字段。"""
+    set_setting("models", models)
+
+
+def save_models(models: List[Dict[str, Any]]) -> None:
+    """公开的保存模型列表接口（供 API 调用）。"""
+    _save_models(models)
+
+
+def upsert_model(name: str, api_url: Optional[str] = None,
+                 api_type: Optional[str] = None,
+                 api_key: Optional[str] = None,
+                 note: Optional[str] = None) -> None:
+    """添加或更新一个模型的信息。"""
+    models = get_models()
+    # 在 models 列表中查找（而非重新读文件）
+    entry = None
+    for m in models:
+        if isinstance(m, dict) and m.get("name") == name:
+            entry = m
+            break
+    if entry:
+        if api_url is not None:
+            entry["api_url"] = api_url
+        if api_type is not None:
+            entry["api_type"] = api_type
+        if api_key is not None:
+            entry["api_key"] = api_key
+        if note is not None:
+            entry["note"] = note
+    else:
+        new_entry: Dict[str, Any] = {"name": name}
+        if api_url is not None:
+            new_entry["api_url"] = api_url
+        if api_type is not None:
+            new_entry["api_type"] = api_type
+        if api_key is not None:
+            new_entry["api_key"] = api_key
+        if note is not None:
+            new_entry["note"] = note
+        models.append(new_entry)
+    _save_models(models)
+
+
+def remove_model(name: str) -> bool:
+    """从列表中删除模型。返回是否成功。"""
+    models = get_models()
+    new_models = [m for m in models if m.get("name") != name]
+    if len(new_models) == len(models):
+        return False
+    _save_models(new_models)
+    return True
+
+
+def _migrate_user_models() -> List[Dict[str, Any]]:
+    """将旧版 user_models.json 迁移到 config.json 的 models 数组。"""
+    user_models_path = os.path.join(
+        os.path.expanduser("~"), ".autorun", "user_models.json"
+    )
+    if not os.path.isfile(user_models_path):
+        return []
+    try:
+        with open(user_models_path, "r", encoding="utf-8") as f:
+            old_models = json.load(f)
+        if not isinstance(old_models, list):
+            return []
+        global_url = get_setting("api_url")
+        global_type = get_setting("api_type", "openai")
+        migrated = []
+        for m in old_models:
+            if isinstance(m, str):
+                entry = {"name": m}
+            elif isinstance(m, dict):
+                entry = {"name": m.get("name", "")}
+                if m.get("api_url"):
+                    entry["api_url"] = m["api_url"]
+                if m.get("note"):
+                    entry["note"] = m["note"]
+            else:
+                continue
+            # 如果模型没有独立 URL，使用全局 URL 作为默认
+            if not entry.get("api_url") and global_url:
+                entry["api_url"] = global_url
+            if not entry.get("api_type") and global_type:
+                entry["api_type"] = global_type
+            migrated.append(entry)
+        # 保存迁移后的数据
+        _save_models(migrated)
+        # 备份后删除旧文件
+        os.rename(user_models_path, user_models_path + ".bak")
+        return migrated
+    except Exception:
+        return []
 
 
 def get_context_window() -> int:
@@ -123,9 +264,9 @@ async def fetch_model_context_window(
     """
     import httpx
 
-    key = api_key or get_api_key()
-    url = api_url or get_api_url()
-    atype = (api_type or get_api_type()).lower()
+    key = api_key or get_api_key(model)
+    url = api_url or get_api_url(model)
+    atype = (api_type or get_api_type(model)).lower()
     m = model or get_model()
 
     if not key or not url or not m:
@@ -188,11 +329,15 @@ def set_context_window(tokens: int) -> None:
     set_setting("context_window", tokens)
 
 
-def get_api_type() -> str:
-    """获取 API 类型 (openai/anthropic)。默认为 openai。"""
+def get_api_type(model: Optional[str] = None) -> str:
+    """获取 API 类型 (openai/anthropic)。检查: 环境变量 -> 模型专属类型 -> 全局 config。"""
     at = os.environ.get("AUTORUN_API_TYPE")
     if at:
         return at.lower()
+    if model:
+        mc = _get_model_entry(model)
+        if mc and mc.get("api_type"):
+            return mc["api_type"].lower()
     return get_setting("api_type", "openai")
 
 
@@ -203,20 +348,20 @@ def set_api_type(api_type: str) -> None:
     set_setting("api_type", api_type)
 
 
-def check_config() -> Dict[str, Any]:
-    """检查配置完整性，返回结果。"""
-    api_key = get_api_key()
-    api_url = get_api_url()
-    model = get_model()
+def check_config(model: Optional[str] = None) -> Dict[str, Any]:
+    """检查配置完整性，返回结果。可指定模型名以使用该模型的专属配置。"""
+    m = model or get_model()
+    api_key = get_api_key(m)
+    api_url = get_api_url(m)
 
     if not api_key:
         return {"ok": False, "error": "API Key not set. Use /api key <your_key>"}
     if not api_url:
         return {"ok": False, "error": "API URL not set. Use /api url <your_url>"}
-    if not model:
+    if not m:
         return {"ok": False, "error": "Model not set. Use /model <model_name>"}
 
-    return {"ok": True, "api_type": get_api_type(), "api_url": api_url, "model": model}
+    return {"ok": True, "api_type": get_api_type(m), "api_url": api_url, "model": m}
 
 
 def get_ocr_model_id() -> str:

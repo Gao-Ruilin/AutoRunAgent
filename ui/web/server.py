@@ -117,15 +117,18 @@ async def health_check() -> Dict[str, Any]:
 
 @app.get("/api/config")
 async def get_config() -> Dict[str, Any]:
-    """获取当前配置。"""
+    """获取当前配置（含模型列表及每个模型的 URL）。"""
+    from AutoRUN_v1.utils.config import get_models as cfg_get_models
+    current_model = get_model()
     return {
-        "model": get_model() or "",
-        "api_type": get_api_type(),
-        "api_url": get_api_url() or "",
+        "model": current_model or "",
+        "api_type": get_api_type(current_model),
+        "api_url": get_api_url(current_model) or "",
         "api_key": cfg_get_api_key() or "",
         "context_window": get_context_window(),
         "ws_sessions": len(_ws_sessions),
         "api_configured": bool(cfg_get_api_key()),
+        "models": cfg_get_models(),
     }
 
 
@@ -170,7 +173,7 @@ async def update_config(request: Request) -> Dict[str, Any]:
 
 @app.post("/api/config/set-model")
 async def set_model(request: Request) -> Dict[str, Any]:
-    """切换当前模型。"""
+    """切换当前模型，同时可更新该模型的专属 URL/类型。"""
     try:
         data = await request.json()
     except Exception:
@@ -180,10 +183,16 @@ async def set_model(request: Request) -> Dict[str, Any]:
     if not model:
         return JSONResponse({"error": "Empty model"}, status_code=400)
 
-    from AutoRUN_v1.utils.config import set_model as cfg_set_model
+    from AutoRUN_v1.utils.config import set_model as cfg_set_model, upsert_model
     from AutoRUN_v1.api.client import reset_client
 
     cfg_set_model(model)
+    # 如果前端传了模型专属配置，一同保存
+    api_url = data.get("api_url", "").strip() or None
+    api_type = data.get("api_type", "").strip() or None
+    api_key = data.get("api_key", "").strip() or None
+    if api_url or api_type or api_key:
+        upsert_model(model, api_url=api_url, api_type=api_type, api_key=api_key)
     reset_client()
     return {"status": "ok", "model": model}
 
@@ -1494,39 +1503,20 @@ async def get_workflow_api(workflow_name: str) -> Dict[str, Any]:
 
 
 # ── 用户模型持久化 API ────────────────────────────────────────────────────
-# 模型存储在服务端 ~/.autorun/user_models.json，不受浏览器端口变化影响
-
-_USER_MODELS_FILE = os.path.join(os.path.expanduser("~"), ".autorun", "user_models.json")
-
-
-def _load_user_models() -> List[Dict[str, Any]]:
-    """从服务端文件加载用户模型列表。"""
-    if not os.path.isfile(_USER_MODELS_FILE):
-        return []
-    try:
-        with open(_USER_MODELS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-
-def _save_user_models(models: List[Dict[str, Any]]) -> None:
-    """保存用户模型列表到服务端文件。"""
-    os.makedirs(os.path.dirname(_USER_MODELS_FILE), exist_ok=True)
-    with FileLock(_USER_MODELS_FILE):
-        with open(_USER_MODELS_FILE, "w", encoding="utf-8") as f:
-            json.dump(models, f, ensure_ascii=False, indent=2)
+# 模型列表现已集成到 config.json 的 models 数组中
+# 旧的 user_models.json 会在首次访问时自动迁移
 
 
 @app.get("/api/user-models")
 async def get_user_models() -> Dict[str, Any]:
-    """获取用户自定义模型列表。"""
-    return {"models": _load_user_models()}
+    """获取用户模型列表（含每个模型的 api_url/api_type/api_key）。"""
+    from AutoRUN_v1.utils.config import get_models
+    return {"models": get_models()}
 
 
 @app.post("/api/user-models")
 async def save_user_models(request: Request) -> Dict[str, Any]:
-    """保存用户自定义模型列表（完整替换）。"""
+    """保存用户模型列表（完整替换）。每个模型可包含: name, api_url, api_type, api_key, note。"""
     try:
         data = await request.json()
     except Exception:
@@ -1534,7 +1524,8 @@ async def save_user_models(request: Request) -> Dict[str, Any]:
     models = data.get("models", [])
     if not isinstance(models, list):
         return JSONResponse({"error": "models must be an array"}, status_code=400)
-    _save_user_models(models)
+    from AutoRUN_v1.utils.config import save_models
+    save_models(models)
     return {"status": "ok", "count": len(models)}
 
 
