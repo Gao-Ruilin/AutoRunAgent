@@ -1,5 +1,4 @@
 #Requires -Version 2.0
-# Win7 适配: 兼容 PowerShell 2.0（Win7 默认版本）
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $scriptDir
@@ -22,7 +21,7 @@ function Find-Python {
     )
     foreach ($baseDir in $searchDirs) {
         if (Test-Path $baseDir) {
-            # Win7 适配: PS 2.0 无 -Directory 参数，使用 Where-Object 过滤容器
+            # Filter for directories
             $dirs = Get-ChildItem -Path $baseDir -Filter "Python3*" -ErrorAction SilentlyContinue |
                 Where-Object { $_.PSIsContainer } |
                 Sort-Object Name -Descending
@@ -63,9 +62,6 @@ if (-not $pythonExe) {
         Write-Host "        1. Download from: https://www.python.org/downloads/"
         Write-Host "        2. IMPORTANT: Check 'Add Python to PATH' during installation"
         Write-Host "        3. Re-run this script after installation"
-        Write-Host ""
-        Write-Host "        Win7 用户注意: Python 3.8.x 是 Win7 最后支持的版本"
-        Write-Host "        请从 https://www.python.org/downloads/release/python-3810/ 下载"
         Write-Host ""
         Read-Host "Press Enter to exit"
         exit 1
@@ -196,7 +192,7 @@ Write-Host "[5/6] Checking project configuration..." -ForegroundColor Yellow
 
 $pyproject = "pyproject.toml"
 if (Test-Path $pyproject) {
-    # Win7 适配: PS 2.0 无 -Raw 参数，使用 Out-String
+    # Read pyproject.toml content
     $content = Get-Content $pyproject | Out-String
     # Fix old-style entry points to use root-level main:cli_main
     if ($content -match 'autorun\s*=\s*"AutoRUN_v1\.') {
@@ -227,7 +223,6 @@ if ($LASTEXITCODE -ne 0) {
     # Add .venv\Scripts to user PATH so autorun works from anywhere
     $venvScripts = Join-Path $scriptDir ".venv\Scripts"
     $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User") -split ";"
-    # Win7 适配: PS 2.0 无 -notin 运算符，使用 -notcontains
     if (-not ($currentPath -contains $venvScripts)) {
         [Environment]::SetEnvironmentVariable(
             "PATH",

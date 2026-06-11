@@ -1,7 +1,5 @@
 """
-CLI 参数解析和 Web UI 启动（Win7 适配版）。
-
-仅支持 Web UI 模式，移除了 REPL 和管道模式以适配旧版 Windows 7 系统。
+CLI 参数解析和 Web UI 启动。
 
 用法:
   autorun              启动 Web UI（默认）
@@ -236,7 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--web",
         action="store_true",
         dest="web_ui",
-        help="启动 Web UI 服务器（Win7 默认模式）",
+        help="启动 Web UI 服务器",
     )
     parser.add_argument(
         "--daemon",
@@ -335,7 +333,7 @@ def _cleanup_lsp() -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def cli_main() -> None:
-    """主 CLI 入口点（Win7 适配版 — 仅 Web UI 模式）。
+    """主 CLI 入口点。
 
     路由到:
     - --setup: 显示设置向导
@@ -347,7 +345,7 @@ def cli_main() -> None:
 
     # ── --version ────────────────────────────────────────────────────────
     if args.show_version:
-        print(f"AutoRUN v{VERSION} (Win7 适配版)")
+        print(f"AutoRUN v{VERSION}")
         return
 
     # ── --setup ───────────────────────────────────────────────────────────
@@ -403,7 +401,7 @@ def cli_main() -> None:
         print("  使用 'taskkill /PID {0}' 或通过悬浮球退出".format(proc.pid) if sys.platform == "win32" else "  使用 'kill {0}' 或通过悬浮球退出".format(proc.pid))
         return
 
-    # ── Web UI mode (default for Win7) ────────────────────────────────────
+    # ── Web UI mode ────────────────────────────────────────────────────────
     from AutoRUN_v1.ui.web.server import start_web_server
 
     url = start_web_server(host=args.web_host, port=args.web_port)
