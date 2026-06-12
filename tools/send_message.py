@@ -28,20 +28,18 @@ def store_pending_message(session_id: str, target: str, message: str,
     })
 
 
-def drain_pending_messages(session_id: str, agent_description: str) -> Optional[str]:
-    """Collect pending messages for a specific agent (matched by description substring).
+def drain_pending_messages(session_id: str, agent_id: str) -> Optional[str]:
+    """Collect pending messages for a specific agent (matched by agent_id).
     Returns combined message, or None."""
     if session_id not in _pending_messages:
         return None
     pending = _pending_messages[session_id]
-    # Match by target name in agent description
+    # Match by exact agent_id
     matched = []
     remaining = []
     for p in pending:
         target = p.get("target", "")
-        # Fuzzy match: target appears in description or vice versa
-        if target and (target.lower() in agent_description.lower()
-                       or any(w in target.lower() for w in agent_description.lower().split())):
+        if target == agent_id:
             matched.append(p)
         else:
             remaining.append(p)

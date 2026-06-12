@@ -10,6 +10,7 @@
 没有任何预设值。
 """
 
+import base64
 import json
 import os
 from typing import Any, Dict, Optional
@@ -262,3 +263,411 @@ def get_language() -> Optional[str]:
 def compute_device_fingerprint() -> str:
     """保留兼容 — 不再使用。"""
     return ""
+
+
+# ── SSH 配置管理 ────────────────────────────────────────────────────────────
+
+def get_ssh_configs() -> list:
+    """获取所有 SSH 配置列表。返回列表，每项包含 name/host/port/user/auth_type 等。
+
+    Returns:
+        List of SSH config dicts (passwords are base64-encoded).
+    """
+    return get_setting("ssh_configs", [])
+
+
+def get_ssh_config(name: str) -> Optional[dict]:
+    """获取单个 SSH 配置。
+
+    Args:
+        name: 配置名称
+
+    Returns:
+        Config dict or None if not found.
+    """
+    configs = get_ssh_configs()
+    for cfg in configs:
+        if cfg.get("name") == name:
+            return dict(cfg)
+    return None
+
+
+def save_ssh_config(
+    name: str,
+    host: str,
+    port: int = 22,
+    user: str = "root",
+    auth_type: str = "password",
+    password: Optional[str] = None,
+    key_path: Optional[str] = None,
+    passphrase: Optional[str] = None,
+) -> list:
+    """保存或更新 SSH 配置。
+
+    Args:
+        name: 配置名称（唯一标识）
+        host: 服务器地址
+        port: SSH 端口，默认 22
+        user: 用户名，默认 root
+        auth_type: 认证类型，"password" 或 "key"
+        password: 密码（会 base64 编码后存储）
+        key_path: 私钥路径
+        passphrase: 私钥口令（会 base64 编码后存储）
+
+    Returns:
+        更新后的配置列表。
+    """
+    configs = get_ssh_configs()
+
+    cfg = {
+        "name": name,
+        "host": host,
+        "port": int(port),
+        "user": user,
+        "auth_type": auth_type,
+    }
+
+    # 密码/密钥脱敏存储
+    if auth_type == "password" and password:
+        cfg["password"] = _encode_sensitive(password)
+    elif auth_type == "key":
+        if key_path:
+            cfg["key_path"] = key_path
+        if passphrase:
+            cfg["passphrase"] = _encode_sensitive(passphrase)
+
+    # 更新或追加
+    found = False
+    for i, c in enumerate(configs):
+        if c.get("name") == name:
+            configs[i] = cfg
+            found = True
+            break
+    if not found:
+        configs.append(cfg)
+
+    set_setting("ssh_configs", configs)
+    return configs
+
+
+def delete_ssh_config(name: str) -> list:
+    """删除 SSH 配置。
+
+    Args:
+        name: 配置名称
+
+    Returns:
+        更新后的配置列表。
+    """
+    configs = get_ssh_configs()
+    configs = [c for c in configs if c.get("name") != name]
+    set_setting("ssh_configs", configs)
+    return configs
+
+
+def get_ssh_config_decrypted(name: str) -> Optional[dict]:
+    """获取 SSH 配置并解密密码字段。
+
+    Args:
+        name: 配置名称
+
+    Returns:
+        Config dict with decrypted password/passphrase, or None.
+    """
+    cfg = get_ssh_config(name)
+    if cfg is None:
+        return None
+
+    cfg = dict(cfg)
+    if "password" in cfg:
+        cfg["password"] = _decode_sensitive(cfg["password"])
+    if "passphrase" in cfg:
+        cfg["passphrase"] = _decode_sensitive(cfg["passphrase"])
+    return cfg
+
+
+def _encode_sensitive(value: str) -> str:
+    """Base64 编码敏感信息。"""
+    return base64.b64encode(value.encode("utf-8")).decode("utf-8")
+
+
+def _decode_sensitive(encoded: str) -> str:
+    """Base64 解码敏感信息。"""
+    try:
+        return base64.b64decode(encoded.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return encoded  # 兼容未编码的旧数据
+
+
+# ── Directory-scoped SSH Configs ─────────────────────────────────────────
+
+def _ssh_configs_file(cwd: str) -> str:
+    """Get the SSH configs file path for a working directory."""
+    import os as _os
+    dir_path = _os.path.join(cwd, ".autorun")
+    _os.makedirs(dir_path, exist_ok=True)
+    return _os.path.join(dir_path, "ssh_configs.json")
+
+
+def get_dir_ssh_configs(cwd: str) -> list:
+    """获取指定目录的 SSH 配置列表（密码脱敏）。"""
+    import json, os as _os
+    fpath = _ssh_configs_file(cwd)
+    if not _os.path.exists(fpath):
+        return []
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            configs = json.load(f)
+    except Exception:
+        return []
+    safe = []
+    for c in configs:
+        sc = dict(c)
+        if sc.get("password"):
+            sc["password"] = "****"
+        if sc.get("key_path"):
+            sc["key_path"] = sc["key_path"][:30] + "..." if len(sc.get("key_path", "")) > 30 else sc["key_path"]
+        safe.append(sc)
+    return safe
+
+
+def get_dir_ssh_config_decrypted(cwd: str, name: str) -> Optional[dict]:
+    """获取指定目录的 SSH 配置并解密密码字段。"""
+    configs = get_dir_ssh_configs(cwd)
+    for cfg in configs:
+        if cfg.get("name") == name:
+            cfg = dict(cfg)
+            if "password" in cfg:
+                cfg["password"] = _decode_sensitive(cfg["password"])
+            if "passphrase" in cfg:
+                cfg["passphrase"] = _decode_sensitive(cfg["passphrase"])
+            return cfg
+    return None
+
+
+def save_dir_ssh_config(cwd: str, name: str, host: str, port: int = 22,
+                        user: str = "root", auth_type: str = "password",
+                        password: Optional[str] = None, key_path: Optional[str] = None,
+                        passphrase: Optional[str] = None) -> list:
+    """保存或更新指定目录的 SSH 配置。"""
+    import json, os as _os
+    fpath = _ssh_configs_file(cwd)
+
+    cfg = {
+        "name": name, "host": host, "port": int(port),
+        "user": user, "auth_type": auth_type,
+    }
+    if auth_type == "password" and password:
+        cfg["password"] = _encode_sensitive(password)
+    elif auth_type == "key":
+        if key_path:
+            cfg["key_path"] = key_path
+        if passphrase:
+            cfg["passphrase"] = _encode_sensitive(passphrase)
+
+    configs = []
+    if _os.path.exists(fpath):
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                configs = json.load(f)
+        except Exception:
+            configs = []
+
+    found = False
+    for i, c in enumerate(configs):
+        if c.get("name") == name:
+            configs[i] = cfg
+            found = True
+            break
+    if not found:
+        configs.append(cfg)
+
+    with open(fpath, "w", encoding="utf-8") as f:
+        json.dump(configs, f, ensure_ascii=False, indent=2)
+
+    return configs
+
+
+def delete_dir_ssh_config(cwd: str, name: str) -> list:
+    """删除指定目录的 SSH 配置。"""
+    import json, os as _os
+    fpath = _ssh_configs_file(cwd)
+    if not _os.path.exists(fpath):
+        return []
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            configs = json.load(f)
+    except Exception:
+        return []
+
+    configs = [c for c in configs if c.get("name") != name]
+
+    if configs:
+        with open(fpath, "w", encoding="utf-8") as f:
+            json.dump(configs, f, ensure_ascii=False, indent=2)
+    else:
+        _os.remove(fpath)
+
+    return configs
+
+
+# ── Connections (local folders + SSH remotes) ──
+
+def get_connections() -> list:
+    """获取所有已保存的连接（本地目录 + SSH 远程）。
+
+    Returns:
+        List of connection dicts with passwords redacted.
+    """
+    conns = get_setting("connections") or []
+    safe = []
+    for c in conns:
+        sc = dict(c)
+        if sc.get("password"):
+            sc["password"] = "****"
+        if sc.get("key_path") and len(sc.get("key_path", "")) > 30:
+            sc["key_path"] = sc["key_path"][:30] + "..."
+        safe.append(sc)
+    return safe
+
+
+def save_connection(conn: dict) -> list:
+    """保存或更新一个连接。
+
+    Args:
+        conn: {name, type: "local"|"ssh", ...}
+              local: {path}
+              ssh: {host, port, user, auth_type, password?, key_path?}
+
+    Returns:
+        Updated list of all connections.
+    """
+    name = conn.get("name", "").strip()
+    if not name:
+        return get_connections()
+
+    # 加密 SSH 密码
+    sc = dict(conn)
+    if sc.get("password") and sc["password"] != "****":
+        sc["password"] = _encode_sensitive(sc["password"])
+
+    conns = get_setting("connections") or []
+    existing = next((c for c in conns if c.get("name") == name), None)
+    if existing:
+        existing.update(sc)
+    else:
+        conns.append(sc)
+
+    set_setting("connections", conns)
+    return get_connections()
+
+
+def delete_connection(name: str) -> list:
+    """删除一个连接。
+
+    Returns:
+        Updated list of all connections.
+    """
+    conns = get_setting("connections") or []
+    conns = [c for c in conns if c.get("name") != name]
+    set_setting("connections", conns)
+    return get_connections()
+
+
+# ── Directory-scoped Connections (per working directory) ──
+
+def _connections_file(cwd: str) -> str:
+    """Get the connections file path for a working directory."""
+    import os as _os
+    dir_path = _os.path.join(cwd, ".autorun")
+    _os.makedirs(dir_path, exist_ok=True)
+    return _os.path.join(dir_path, "connections.json")
+
+
+def get_dir_connections(cwd: str) -> list:
+    """获取指定目录的已保存连接（密码脱敏）。"""
+    import json, os as _os
+    fpath = _connections_file(cwd)
+    if not _os.path.exists(fpath):
+        return []
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            conns = json.load(f)
+    except Exception:
+        return []
+    safe = []
+    for c in conns:
+        sc = dict(c)
+        if sc.get("password"):
+            sc["password"] = "****"
+        if sc.get("key_path") and len(sc.get("key_path", "")) > 30:
+            sc["key_path"] = sc["key_path"][:30] + "..."
+        safe.append(sc)
+    return safe
+
+
+def save_dir_connection(cwd: str, conn: dict) -> list:
+    """保存或更新一个目录隔离的连接。
+
+    Args:
+        cwd: 当前工作目录
+        conn: {name, type: "local"|"ssh", ...}
+
+    Returns:
+        Updated list of all connections for this directory.
+    """
+    import json, os as _os
+    name = conn.get("name", "").strip()
+    if not name:
+        return get_dir_connections(cwd)
+
+    sc = dict(conn)
+    if sc.get("password") and sc["password"] != "****":
+        sc["password"] = _encode_sensitive(sc["password"])
+
+    fpath = _connections_file(cwd)
+    conns = []
+    if _os.path.exists(fpath):
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                conns = json.load(f)
+        except Exception:
+            conns = []
+
+    existing = next((c for c in conns if c.get("name") == name), None)
+    if existing:
+        existing.update(sc)
+    else:
+        conns.append(sc)
+
+    with open(fpath, "w", encoding="utf-8") as f:
+        json.dump(conns, f, ensure_ascii=False, indent=2)
+
+    return get_dir_connections(cwd)
+
+
+def delete_dir_connection(cwd: str, name: str) -> list:
+    """删除指定目录的一个连接。
+
+    Returns:
+        Updated list of all connections for this directory.
+    """
+    import json, os as _os
+    fpath = _connections_file(cwd)
+    if not _os.path.exists(fpath):
+        return []
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            conns = json.load(f)
+    except Exception:
+        return []
+
+    conns = [c for c in conns if c.get("name") != name]
+
+    if conns:
+        with open(fpath, "w", encoding="utf-8") as f:
+            json.dump(conns, f, ensure_ascii=False, indent=2)
+    else:
+        _os.remove(fpath)
+
+    return get_dir_connections(cwd)

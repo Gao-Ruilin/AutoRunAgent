@@ -98,10 +98,17 @@ class EnterPlanModeTool(Tool):
     async def call(self, args: Dict[str, Any], context: ToolContext) -> ToolResult:
         global _plan_mode_active
         _plan_mode_active = True
+
+        # 确保计划目录存在
+        cwd = context.cwd or os.getcwd()
+        plan_dir = os.path.join(cwd, ".autorun_plans")
+        os.makedirs(plan_dir, exist_ok=True)
+
+        plan_file = os.path.join(plan_dir, "current_plan.md")
         return ToolResult(
             data="[Plan mode activated] You are now in plan mode. Explore the codebase, "
-                 "design your approach, and present a plan for user approval. "
-                 "Use ExitPlanMode when ready to get approval.",
+                 f"design your approach, and write your plan to `{plan_file}`. "
+                 "Use ExitPlanMode when ready to submit the plan for user approval.",
             is_error=False,
         )
 
@@ -170,11 +177,40 @@ class ExitPlanModeTool(Tool):
         allowed_prompts = args.get("allowedPrompts", [])
         prompts_summary = ", ".join(p.get("prompt", "") for p in allowed_prompts) if allowed_prompts else "none"
 
+        # 读取计划文件内容
+        cwd = context.cwd or os.getcwd()
+        plan_file = os.path.join(cwd, ".autorun_plans", "current_plan.md")
+        plan_text = ""
+        try:
+            if os.path.exists(plan_file):
+                with open(plan_file, "r", encoding="utf-8") as f:
+                    plan_text = f.read().strip()
+                _plan_content = plan_text
+        except Exception:
+            pass
+
+        if plan_text:
+            # 展示计划内容给用户审查
+            display = (
+                "---\n\n"
+                "## 计划已提交供审批\n\n"
+                + plan_text +
+                "\n\n---\n\n"
+                "**请审查以上计划。**\n"
+                '- 回复 "批准" 或 "继续" 以批准并开始实现\n'
+                "- 回复你的修改意见以调整计划\n"
+                f"\n允许的执行提示: {prompts_summary}"
+            )
+        else:
+            display = (
+                f"[Plan mode exited] 未找到计划文件 ({plan_file})。\n"
+                "请将计划写入该文件后重新调用 ExitPlanMode。\n"
+                f"允许的执行提示: {prompts_summary}"
+            )
+
         return ToolResult(
-            data=f"[Plan mode exited] Plan submitted for approval.\n"
-                 f"Allowed execution prompts: {prompts_summary}\n\n"
-                 f"The user will now review your plan and approve or request changes.",
-            is_error=False,
+            data=display,
+            is_error=not bool(plan_text),
         )
 
 

@@ -18,6 +18,12 @@ websockets>=10.0
 aiohttp>=3.8.0
 httpx>=0.24.0
 
+# SSH Remote (惰性导入，不影响 WebSocket)
+# 以下版本兼容 Windows 7-11 + Python 3.8-3.13，无需 Rust 编译器
+paramiko>=3.0.0,<4.0.0
+cryptography>=41.0.0,<43.0.0
+bcrypt>=4.0.0,<4.2.0
+
 # Utilities
 python-dotenv>=1.0.0
 
