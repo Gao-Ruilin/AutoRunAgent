@@ -399,7 +399,7 @@ class TaskUpdateTool(Tool):
 class TaskOutputTool(Tool):
     """Retrieve output from background Agent or task.
 
-Results are indexed by Agent description — use the description as task_id for retrieval."""
+Results are indexed by Agent ID (unique per agent) — use agent_id as task_id for retrieval."""
 
     @property
     def name(self) -> str:
@@ -409,11 +409,12 @@ Results are indexed by Agent description — use the description as task_id for 
     def description(self) -> str:
         return """从后台 Agent 或任务中检索输出。
 
-- 接受 task_id 参数来标识任务（Agent 的 description 或任务 ID）
+- 接受 task_id 参数来标识任务（Agent 的唯一 ID 或任务 ID）
 - 精准匹配 — 先按 task_id 查找对应 Agent 的结果
 - 找到则返回该 Agent 的完整输出；未找到则返回所有待处理结果
 - 如果 Agent 仍在运行，返回运行状态及描述
-- task_id 留空时返回所有已完成的后台结果"""
+- task_id 留空时返回所有已完成的后台结果
+- 此工具为即时查询，不阻塞。子Agent 完成后会自动汇报，不要主动轮询"""
 
     @property
     def input_schema(self) -> Dict[str, Any]:
@@ -422,21 +423,9 @@ Results are indexed by Agent description — use the description as task_id for 
             "properties": {
                 "task_id": {
                     "type": "string",
-                    "description": "The task ID to get output from. Can be Agent description, task ID, etc. Leave empty to drain all results.",
-                },
-                "block": {
-                    "type": "boolean",
-                    "description": "Whether to wait for completion",
-                    "default": True,
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Max wait time in ms",
-                    "minimum": 0,
-                    "maximum": 600000,
+                    "description": "The task ID to get output from. Can be Agent ID (e.g. 'agent_1'), or leave empty to drain all results.",
                 },
             },
-            "required": ["task_id", "block", "timeout"],
         }
 
     def is_read_only(self, args: Dict[str, Any]) -> bool:
@@ -444,11 +433,9 @@ Results are indexed by Agent description — use the description as task_id for 
 
     async def call(self, args: Dict[str, Any], context: ToolContext) -> ToolResult:
         task_id = args.get("task_id", "")
-        timeout = args.get("timeout", 30000)
-        block = args.get("block", True)
 
         from AutoRUN_v1.tools.agent_tool import (
-            drain_background_results, drain_background_result_by_desc,
+            drain_background_results, drain_background_result_by_id,
             _background_tasks,
         )
 
@@ -456,20 +443,28 @@ Results are indexed by Agent description — use the description as task_id for 
         session_id = getattr(context.state, 'session_id', None) if context.state else None
         session_id = session_id or "default"
 
-        # 1. 如果指定了 task_id，精准按 description 查找
+        # 1. 如果指定了 task_id，精准按 agent_id 查找
         if task_id:
-            result = drain_background_result_by_desc(session_id, task_id)
+            result = drain_background_result_by_id(session_id, task_id)
             if result:
                 return ToolResult(data=result, is_error=False)
-            # 也尝试模糊匹配运行中的任务
+
+            # 检查是否仍在运行
             running = _background_tasks.get(session_id, [])
-            matching = [e for e in running if task_id.lower() in e.get("description", "").lower()]
+            matching = [e for e in running if e.get("agent_id", "") == task_id]
+            if not matching:
+                matching = [e for e in running if task_id.lower() in e.get("description", "").lower()]
+
             if matching:
-                descs = [e.get("description", "?") for e in matching]
+                descs = [f"{e.get('description', '?')} (ID: {e.get('agent_id', '?')})" for e in matching]
                 return ToolResult(
-                    data=f"Agent 尚未完成 — 匹配 '{task_id}': {', '.join(descs)}。可稍后再检查结果。",
+                    data=f"Agent 仍在运行中 — 匹配 '{task_id}': {', '.join(descs)}。",
                     is_error=False,
                 )
+            return ToolResult(
+                data=f"未找到 Agent '{task_id}'。可能已完成并被取走，或不存在。",
+                is_error=False,
+            )
 
         # 2. 批量获取所有已完成结果
         result = drain_background_results(session_id)
@@ -479,33 +474,22 @@ Results are indexed by Agent description — use the description as task_id for 
         # 3. 检查是否有还在运行的任务
         running = _background_tasks.get(session_id, [])
         if running:
-            descs = [e.get("description", "?") for e in running]
+            descs = [f"{e.get('description', '?')} (ID: {e.get('agent_id', '?')})" for e in running]
             return ToolResult(
-                data=f"有 {len(running)} 个 Agent 尚未完成: {', '.join(descs)}。完成后结果自动加入对话。",
+                data=f"Agent 仍在运行中 ({len(running)}个): {', '.join(descs)}。完成后结果自动汇报。",
                 is_error=False,
             )
 
-        # 4. 也检查 fallback "default" session
-        if session_id != "default":
-            result = drain_background_results("default")
-            if result:
-                return ToolResult(data=result, is_error=False)
-            running = _background_tasks.get("default", [])
-            if running:
-                descs = [e.get("description", "?") for e in running]
-                return ToolResult(
-                    data=f"有 {len(running)} 个 Agent 尚未完成: {', '.join(descs)}。",
-                    is_error=False,
-                )
-
         return ToolResult(
-            data=f"未找到 Agent 结果。所有 Agent 已完成且结果已被取走，或无 Agent 运行。",
+            data=f"当前无运行中或已完成的 Agent 结果。",
             is_error=False,
         )
 
 
 class TaskStopTool(Tool):
-    """Stop a running background task."""
+    """Stop a running background task.
+
+    Cancels both AppState tasks and background asyncio agent tasks."""
 
     @property
     def name(self) -> str:
@@ -516,6 +500,7 @@ class TaskStopTool(Tool):
         return """通过 ID 停止正在运行的后台任务。
 
 - 接受 task_id 参数来标识要停止的任务
+- 可停止 AppState 任务列表中的任务，也可停止 Agent ID（如 agent_1）
 - 返回成功或失败状态
 - 当需要终止长时间运行的任务时使用此工具"""
 
@@ -526,7 +511,7 @@ class TaskStopTool(Tool):
             "properties": {
                 "task_id": {
                     "type": "string",
-                    "description": "The task ID to stop",
+                    "description": "The task ID to stop (numeric ID or agent ID like 'agent_1')",
                 },
             },
             "required": ["task_id"],
@@ -537,15 +522,34 @@ class TaskStopTool(Tool):
 
     async def call(self, args: Dict[str, Any], context: ToolContext) -> ToolResult:
         state = _get_state(context)
-        if state is None:
-            return ToolResult(data="Error: session state unavailable", is_error=True)
-
         task_id = args.get("task_id", "")
-        tasks = state.tasks
-        if task_id in tasks:
-            tasks[task_id]["status"] = "completed"
-            return ToolResult(data=f"Task #{task_id} stopped.", is_error=False)
+
+        stopped = False
+
+        # 1. 先尝试在 AppState 任务列表中查找并标记为完成
+        if state is not None:
+            tasks = state.tasks
+            if task_id in tasks:
+                tasks[task_id]["status"] = "completed"
+                stopped = True
+
+        # 2. 尝试取消实际运行的 background agent task
+        try:
+            from AutoRUN_v1.tools.agent_tool import cancel_agent_by_id
+            if cancel_agent_by_id(session_id="default", agent_id=task_id):
+                stopped = True
+            # 也尝试带 session_id 的版本
+            session_id = getattr(context.state, 'session_id', None) if context.state else None
+            if session_id:
+                if cancel_agent_by_id(session_id=session_id, agent_id=task_id):
+                    stopped = True
+        except Exception:
+            pass
+
+        if stopped:
+            return ToolResult(data=f"Task/Agent '{task_id}' 已停止。", is_error=False)
+
         return ToolResult(
-            data=f"Task #{task_id} not found.",
+            data=f"Task/Agent '{task_id}' 未找到（既不在任务列表中，也不在运行中）。",
             is_error=True,
         )

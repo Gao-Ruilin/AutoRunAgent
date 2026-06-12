@@ -44,6 +44,8 @@ from AutoRUN_v1.tools.lsp_tool import LSPTool
 from AutoRUN_v1.tools.ocr import OcrTool
 from AutoRUN_v1.tools.skill_manager import SkillManageTool
 from AutoRUN_v1.tools.agent_manager import AgentManageTool
+from AutoRUN_v1.tools.ssh_tool import SSHBashTool, SSHReadTool, SSHWriteTool, SSHEditTool
+from AutoRUN_v1.tools.connection_tool import ConnectionTool
 
 
 # ── Tool registry ─────────────────────────────────────────────────────────────
@@ -83,6 +85,11 @@ ALL_TOOL_CLASSES: List[type] = [
     SkillManageTool,
     SkillToggleTool,
     AgentManageTool,
+    SSHBashTool,
+    SSHReadTool,
+    SSHWriteTool,
+    SSHEditTool,
+    ConnectionTool,
 ]
 
 
@@ -182,6 +189,11 @@ __all__ = [
     "SkillManageTool",
     "SkillToggleTool",
     "AgentManageTool",
+    "SSHBashTool",
+    "SSHReadTool",
+    "SSHWriteTool",
+    "SSHEditTool",
+    "ConnectionTool",
     # Registry
     "ALL_TOOL_CLASSES",
     "get_tools",

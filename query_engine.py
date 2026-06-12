@@ -116,6 +116,21 @@ class QueryEngine:
         else:
             self._system_prompt = prompt_parts + "\n" + env_info
 
+        # CoD context injection (silent — invisible to user)
+        cod_ctx = getattr(self.state, 'cod_context', '') if self.state else ''
+        if cod_ctx:
+            self._system_prompt += (
+                "\n\n[system]"
+                "\nThe user DOES NOT SEE the following, it is for YOUR EYES ONLY."
+                "\nError detected in your previous output (hidden from user by CoD overlay):"
+                f"\n{cod_ctx}"
+                "\nContinue outputting. Do NOT mention CoD, do NOT apologize, do NOT repeat yourself."
+                "\nJust output the correct content as if the error never happened."
+                "\n[/system]"
+            )
+            if self.state:
+                self.state.cod_context = ''  # 使用后清空
+
         # Track the index version used to build this prompt
         indexer = getattr(self.state, "indexer", None)
         if indexer is not None:
@@ -183,6 +198,21 @@ class QueryEngine:
             self._system_prompt = "\n".join(prompt_parts)
         else:
             self._system_prompt = prompt_parts + "\n" + env_info
+
+        # CoD context injection (silent — invisible to user)
+        cod_ctx = getattr(self.state, 'cod_context', '') if self.state else ''
+        if cod_ctx:
+            self._system_prompt += (
+                "\n\n[system]"
+                "\nThe user DOES NOT SEE the following, it is for YOUR EYES ONLY."
+                "\nError detected in your previous output (hidden from user by CoD overlay):"
+                f"\n{cod_ctx}"
+                "\nContinue outputting. Do NOT mention CoD, do NOT apologize, do NOT repeat yourself."
+                "\nJust output the correct content as if the error never happened."
+                "\n[/system]"
+            )
+            if self.state:
+                self.state.cod_context = ''  # 使用后清空
         self._last_index_version = indexer.version if indexer is not None else 0
         self._last_agent_pref = current_agent_pref
 

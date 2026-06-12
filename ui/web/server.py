@@ -71,7 +71,7 @@ _agent_outputs: Dict[str, Dict[str, List[str]]] = {}  # session_id -> {agent_id:
 _agent_poll_tasks: Dict[str, asyncio.Task] = {}  # session_id -> poll task
 
 # Auto-trigger guard: prevent duplicate auto-trigger scheduling
-_auto_trigger_guard: Dict[str, bool] = {}
+_auto_trigger_guard: Dict[str, asyncio.Lock] = {}
 
 # Token usage tracking
 # In-memory: current WebSocket session token counts (session_id -> total)
@@ -124,10 +124,10 @@ async def get_config() -> Dict[str, Any]:
         "model": current_model or "",
         "api_type": get_api_type(current_model),
         "api_url": get_api_url(current_model) or "",
-        "api_key": cfg_get_api_key() or "",
+        "api_key": get_api_key(current_model) or "",
         "context_window": get_context_window(),
         "ws_sessions": len(_ws_sessions),
-        "api_configured": bool(cfg_get_api_key()),
+        "api_configured": bool(get_api_key(current_model)),
         "models": cfg_get_models(),
     }
 
@@ -195,6 +195,202 @@ async def set_model(request: Request) -> Dict[str, Any]:
         upsert_model(model, api_url=api_url, api_type=api_type, api_key=api_key)
     reset_client()
     return {"status": "ok", "model": model}
+
+
+# ── SSH Config Endpoints ──
+
+@app.get("/api/ssh-configs")
+async def get_ssh_configs() -> Dict[str, Any]:
+    """获取当前目录的 SSH 配置（密码脱敏）。"""
+    from AutoRUN_v1.utils.config import get_dir_ssh_configs
+    cwd = _base_dir
+    return {"configs": get_dir_ssh_configs(cwd)}
+
+
+@app.post("/api/ssh-configs")
+async def save_ssh_config_endpoint(request: Request) -> Dict[str, Any]:
+    """保存当前目录的 SSH 配置。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    name = data.get("name", "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+
+    from AutoRUN_v1.utils.config import save_dir_ssh_config
+    cwd = _base_dir
+    save_dir_ssh_config(
+        cwd=cwd,
+        name=name,
+        host=data.get("host", ""),
+        port=int(data.get("port", 22)),
+        user=data.get("user", ""),
+        auth_type=data.get("auth_type", "password"),
+        password=data.get("password", ""),
+        key_path=data.get("key_path", ""),
+    )
+    return {"status": "ok"}
+
+
+@app.delete("/api/ssh-configs")
+async def delete_ssh_config_endpoint(request: Request) -> Dict[str, Any]:
+    """删除当前目录的 SSH 配置。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    name = data.get("name", "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+
+    from AutoRUN_v1.utils.config import delete_dir_ssh_config
+    cwd = _base_dir
+    delete_dir_ssh_config(cwd, name)
+    return {"status": "ok"}
+
+
+# ── Connections (local folders + SSH remotes) ──
+
+@app.get("/api/connections")
+async def get_connections_endpoint() -> Dict[str, Any]:
+    """获取当前目录的已保存连接（密码脱敏）。"""
+    from AutoRUN_v1.utils.config import get_dir_connections
+    cwd = _base_dir
+    return {"connections": get_dir_connections(cwd)}
+
+
+@app.post("/api/connections")
+async def save_connection_endpoint(request: Request) -> Dict[str, Any]:
+    """保存当前目录的连接。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    name = data.get("name", "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    from AutoRUN_v1.utils.config import save_dir_connection
+    cwd = _base_dir
+    save_dir_connection(cwd, data)
+    return {"status": "ok"}
+
+
+@app.delete("/api/connections")
+async def delete_connection_endpoint(request: Request) -> Dict[str, Any]:
+    """删除当前目录的一个连接。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    name = data.get("name", "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    from AutoRUN_v1.utils.config import delete_dir_connection
+    cwd = _base_dir
+    delete_dir_connection(cwd, name)
+    return {"status": "ok"}
+
+
+@app.post("/api/connections/{name}/connect")
+async def connect_ssh_endpoint(name: str) -> Dict[str, Any]:
+    """建立 SSH 连接并返回远程根目录文件列表。"""
+    from AutoRUN_v1.utils.config import get_dir_connections, _decode_sensitive
+
+    cwd = _base_dir
+    conns = get_dir_connections(cwd)
+    cfg = None
+    for c in conns:
+        if c.get("name") == name and c.get("type") == "ssh":
+            cfg = dict(c)
+            break
+    if not cfg:
+        return JSONResponse({"error": f"SSH config '{name}' not found"}, status_code=404)
+
+    # Decrypt password
+    if cfg.get("password") and cfg["password"] != "****":
+        cfg["password"] = _decode_sensitive(cfg["password"])
+
+    try:
+        from AutoRUN_v1.utils.ssh_client import get_ssh_client
+        client = get_ssh_client()
+        key_path = cfg.get("key_path", "")
+        if key_path:
+            import os as _os
+            key_path = _os.path.expanduser(key_path)
+            if not _os.path.isabs(key_path):
+                key_path = _os.path.abspath(key_path)
+        client.connect(
+            name,
+            host=cfg["host"], port=cfg.get("port", 22),
+            user=cfg["user"], password=cfg.get("password", ""),
+            key_path=key_path,
+        )
+        result = client.exec_command(cfg["host"], cfg.get("port", 22), "ls -la /")
+        stdout = result.get("stdout", "")
+        files = _parse_ls_output(stdout, "/")
+        return {"status": "ok", "files": files, "root": "/"}
+    except Exception as e:
+        return JSONResponse({"error": f"SSH connection failed: {str(e)}"}, status_code=500)
+
+
+@app.get("/api/connections/{name}/files")
+async def get_remote_files(name: str, path: str = "/") -> Dict[str, Any]:
+    """获取远程目录文件列表。"""
+    from AutoRUN_v1.utils.config import get_dir_connections, _decode_sensitive
+
+    cwd = _base_dir
+    conns = get_dir_connections(cwd)
+    cfg = None
+    for c in conns:
+        if c.get("name") == name and c.get("type") == "ssh":
+            cfg = dict(c)
+            break
+    if not cfg:
+        return JSONResponse({"error": f"SSH config '{name}' not found"}, status_code=404)
+
+    if cfg.get("password") and cfg["password"] != "****":
+        cfg["password"] = _decode_sensitive(cfg["password"])
+
+    try:
+        from AutoRUN_v1.utils.ssh_client import get_ssh_client
+        client = get_ssh_client()
+        safe_path = path.replace("..", "").replace(";", "").replace("&", "").replace("|", "")
+        if not safe_path.startswith("/"):
+            safe_path = "/" + safe_path
+        result = client.exec_command(cfg["host"], cfg.get("port", 22), f"ls -la {safe_path}")
+        stdout = result.get("stdout", "")
+        files = _parse_ls_output(stdout, safe_path)
+        return {"status": "ok", "files": files, "path": safe_path}
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to list remote files: {str(e)}"}, status_code=500)
+
+
+def _parse_ls_output(stdout: str, parent_path: str) -> list:
+    """解析 ls -la 输出为文件列表。"""
+    files = []
+    for line in stdout.strip().split("\n"):
+        parts = line.split()
+        if len(parts) < 9:
+            continue
+        try:
+            perms = parts[0]
+            is_dir = perms.startswith("d")
+            name = " ".join(parts[8:])
+            if name in (".", ".."):
+                continue
+            files.append({
+                "name": name,
+                "path": parent_path.rstrip("/") + "/" + name,
+                "is_dir": is_dir,
+                "size": parts[4] if not is_dir else "",
+                "modified": " ".join(parts[5:8]),
+            })
+        except (IndexError, ValueError):
+            continue
+    return sorted(files, key=lambda f: (not f["is_dir"], f["name"].lower()))
 
 
 @app.get("/api/sessions")
@@ -508,6 +704,19 @@ async def chat_http(request: Request) -> Dict[str, Any]:
 
         full_prompt = "\n".join(system_prompt) if isinstance(system_prompt, list) else (system_prompt or "")
         full_prompt += "\n" + env_info
+
+        # CoD context injection (silent)
+        cod_state = _ws_states.get(session_id) if session_id else None
+        if cod_state and hasattr(cod_state, 'cod_context') and cod_state.cod_context:
+            cod_text = cod_state.cod_context
+            cod_state.cod_context = ''
+            full_prompt += (
+                "\n\n[system]"
+                "\nError in your previous output (hidden from user by CoD overlay):"
+                f"\n{cod_text}"
+                "\nContinue outputting the correct content. Do NOT mention CoD, do NOT apologize."
+                "\n[/system]"
+            )
 
         context_text = build_context_text(user_context, system_context)
 
@@ -1503,20 +1712,19 @@ async def get_workflow_api(workflow_name: str) -> Dict[str, Any]:
 
 
 # ── 用户模型持久化 API ────────────────────────────────────────────────────
-# 模型列表现已集成到 config.json 的 models 数组中
-# 旧的 user_models.json 会在首次访问时自动迁移
+# 模型存储在 config.json 的 models 数组中，由 config.py 统一管理
 
 
 @app.get("/api/user-models")
 async def get_user_models() -> Dict[str, Any]:
-    """获取用户模型列表（含每个模型的 api_url/api_type/api_key）。"""
+    """获取用户自定义模型列表。"""
     from AutoRUN_v1.utils.config import get_models
     return {"models": get_models()}
 
 
 @app.post("/api/user-models")
 async def save_user_models(request: Request) -> Dict[str, Any]:
-    """保存用户模型列表（完整替换）。每个模型可包含: name, api_url, api_type, api_key, note。"""
+    """保存用户自定义模型列表（完整替换）。"""
     try:
         data = await request.json()
     except Exception:
@@ -1560,27 +1768,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         _agent_poll_tasks[session_id] = agent_poll_task
 
         # 注册 Agent 完成回调 — 子Agent完成时自动触发门控处理
-        async def _on_agent_done(sid, desc, result_str):
-            if _ws_tasks.get(sid) and not _ws_tasks[sid].done():
-                return  # Gatekeeper is busy, result will be drained next turn
-            prompt = f"以下子 Agent 已完成工作，请 <report> 汇总结果给用户：\n\n{result_str}"
-            cancel_ev = asyncio.Event()
-            _ws_cancel_events[session_id] = cancel_ev
-            task = asyncio.create_task(
-                _handle_chat_message(websocket, {"message": prompt, "session_id": session_id}, cancel_ev)
-            )
-            _ws_tasks[session_id] = task
+        # （只注册一个回调，避免竞态）
         from AutoRUN_v1.tools.agent_tool import register_agent_done_callback
-        register_agent_done_callback(session_id, _on_agent_done)
 
-        # 注册自动触发回调：子Agent 完成时通知门控Agent 处理结果
-        from AutoRUN_v1.tools.agent_tool import register_agent_done_callback as reg_cb2
-
-        def _on_agent_done_callback(done_session_id: str, description: str, result_str: str):
-            """Called from agent_tool._on_done when a background agent completes."""
-            if done_session_id != session_id:
-                return
-            # Schedule auto-trigger check
+        def _on_agent_done_callback(done_session_id: str, agent_id: str, result_str: str):
+            """Called from agent_tool._on_done when a background agent completes.
+            Uses closure-captured session_id to ensure correct routing."""
             try:
                 asyncio.create_task(
                     _maybe_auto_trigger_agent_results(websocket, session_id)
@@ -1588,18 +1781,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             except Exception:
                 logger.debug("Failed to schedule auto-trigger for session %s", session_id, exc_info=True)
 
-        reg_cb2(session_id, _on_agent_done_callback)
+        register_agent_done_callback(session_id, _on_agent_done_callback)
 
         # 注册流式回调：子Agent 流式输出转发到前端
         from AutoRUN_v1.tools.agent_tool import register_stream_callback
 
-        def _on_agent_stream(done_session_id: str, description: str, event: dict):
+        def _on_agent_stream(done_session_id: str, agent_id: str, event: dict):
             """转发子 Agent 流式事件到 WebSocket。"""
-            if done_session_id != session_id:
-                return
+            # Use closure-captured session_id; ignore done_session_id
             try:
                 evt = dict(event)
-                evt["agent_id"] = description
+                evt["agent_id"] = agent_id
                 evt["type"] = "agent_stream"
                 asyncio.create_task(websocket.send_json(evt))
             except Exception:
@@ -1706,6 +1898,32 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         "type": "system",
                         "text": f"命令: {command}",
                     })
+                elif message_type == "cancel_queued":
+                    # Frontend wants to cancel a specific queued message
+                    msg_id = data.get("message_id", "")
+                    if session_id in _ws_queued:
+                        before_count = len(_ws_queued[session_id])
+                        _ws_queued[session_id] = [
+                            item for item in _ws_queued[session_id]
+                            if item.get("message_id") != msg_id
+                        ]
+                        after_count = len(_ws_queued[session_id])
+                        if not _ws_queued[session_id]:
+                            del _ws_queued[session_id]
+                        logger.warning(f"CANCEL_QUEUED: sid={session_id}, msg_id={msg_id}, removed={before_count - after_count}")
+                        await _send_queue_update(websocket, session_id)
+                elif message_type == "cod_detected":
+                    # Frontend detected error in AI output — inject CoD correction context
+                    cod_error = data.get("error_text", "")[:500]
+                    logger.warning(f"CoD: sid={session_id}, error_snippet={cod_error[:80]}")
+                    # Store CoD context for next engine rebuild
+                    if session_id in _ws_states:
+                        state = _ws_states[session_id]
+                        prev = getattr(state, 'cod_context', '') or ''
+                        state.cod_context = (prev + '\n' + cod_error)[-2000:]
+                        # Invalidate engine to rebuild with CoD context
+                        if session_id in _ws_engines:
+                            del _ws_engines[session_id]
                 else:
                     await websocket.send_json({
                         "type": "error",
@@ -1739,7 +1957,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         _ws_queued.pop(session_id, None)
         _agent_last_status.pop(session_id, None)
         _agent_outputs.pop(session_id, None)
-        _auto_trigger_guard.pop(session_id, None)
+        # Clean up auto-trigger lock
         # Clean up auto-trigger callback
         try:
             from AutoRUN_v1.tools.agent_tool import unregister_agent_done_callbacks
@@ -1819,14 +2037,16 @@ async def _handle_chat_message(websocket: WebSocket, data: Dict[str, Any], cance
         if bg_results:
             if is_auto_trigger:
                 prompt = (
-                    "以下子 Agent 已在后台完成工作，请 <report> 汇总结果给用户：\n\n"
+                    "以下子 Agent 已在后台完成工作，请汇总结果给用户：\n\n"
                     + bg_results
+                    + "\n\n请用自己的话简洁总结子 Agent 完成的工作，不要直接复制子 Agent 的输出。"
                 )
             else:
                 prompt = (
-                    "以下子 Agent 已在后台完成工作，请 <report> 汇总结果给用户：\n\n"
+                    "以下子 Agent 已在后台完成工作，请汇总结果给用户：\n\n"
                     + bg_results +
-                    "\n\n---\n用户原始消息:\n" + prompt
+                    "\n\n---\n用户原始消息:\n" + prompt +
+                    "\n\n请优先回应用户的消息，如需提及子 Agent 的结果，用自己的话简洁总结。"
                 )
             try:
                 current = _get_agent_status_snapshot(session_id)
@@ -1843,7 +2063,12 @@ async def _handle_chat_message(websocket: WebSocket, data: Dict[str, Any], cance
                         desc = result_str[len("[Agent 结果: "):].split("]", 1)[0]
                     elif result_str.startswith("[Agent 错误: "):
                         desc = result_str[len("[Agent 错误: "):].split("]", 1)[0]
-                    result_text = result_str[:3000]
+                    elif result_str.startswith("[Agent 已取消: "):
+                        desc = result_str[len("[Agent 已取消: "):].split("]", 1)[0]
+                    # 只发送纯结果内容（跳过 [Agent 结果: desc] 头部），且截断到 3000 字符
+                    result_parts = result_str.split("\n", 1)
+                    result_text = result_parts[1] if len(result_parts) > 1 else result_str
+                    result_text = result_text[:3000]
                     await _send_agent_output(
                         websocket, session_id, desc,
                         result_text, is_partial=False
@@ -1935,7 +2160,7 @@ async def _handle_chat_message(websocket: WebSocket, data: Dict[str, Any], cance
                     "type": "error",
                     "error": event.get("error", ""),
                 })
-                return
+                break
 
             elif event_type == "terminal":
                 pass
@@ -1944,111 +2169,144 @@ async def _handle_chat_message(websocket: WebSocket, data: Dict[str, Any], cance
         if not _was_cancelled:
             await _maybe_send_task_update()
 
-            # ── Drain queued messages ────────────────────────────────────────
-            logger.warning(f"DRAIN_CHECK: sid={session_id}, in_dict={session_id in _ws_queued}, count={len(_ws_queued.get(session_id, []))}, cancelled={_was_cancelled}")
-            while session_id in _ws_queued and _ws_queued[session_id]:
-                # Check for cancellation before processing next queued message
-                if cancel_event and cancel_event.is_set():
-                    _was_cancelled = True
-                    break
-
-                # Get the next queued message
-                qlist = _ws_queued[session_id]
-                next_data = qlist.pop(0)
-                q_msg_id = next_data.get("message_id", "")
-                q_prompt = next_data.get("message", "").strip()
-
-                if not qlist:
-                    del _ws_queued[session_id]
-
-                if not q_prompt:
-                    # Still send queue update for remaining messages
-                    await _send_queue_update(websocket, session_id)
-                    continue
-
-                # Notify frontend that we're processing this specific queued message
-                await websocket.send_json({
-                    "type": "queued_processing",
-                    "session_id": session_id,
-                    "message_id": q_msg_id,
-                    "message_text": q_prompt,
-                    "remaining": len(qlist),
-                })
-
-                # Send updated queue positions for remaining queued messages
-                await _send_queue_update(websocket, session_id)
-
-                # Build contextual prompt for queued message
-                # Simple: just send the original message, the AI handles it naturally
-                combined_prompt = q_prompt
-
-                # Track per-queued-message state
-                _q_last_sent_text = ""
-                _q_task_tools_seen = set()
-                _q_skill_tool_seen = False
-                _q_was_cancelled = False
-
+            # ── Drain queued messages (extracted as local function) ──────────
+            async def _drain_queued():
+                """Process all queued messages. Safe to call even if engine is not ready."""
+                nonlocal _skill_tool_seen, _was_cancelled
                 try:
-                    async for event in engine.send_message(combined_prompt):
+                    # Guard: if engine not available, just clear the queue
+                    engine  # will raise NameError if not defined
+                except NameError:
+                    _ws_queued.pop(session_id, None)
+                    return
+                try:
+                    logger.warning(f"DRAIN_CHECK: sid={session_id}, in_dict={session_id in _ws_queued}, count={len(_ws_queued.get(session_id, []))}, cancelled={_was_cancelled}")
+                    while session_id in _ws_queued and _ws_queued[session_id]:
+                        # Check for cancellation before processing next queued message
                         if cancel_event and cancel_event.is_set():
-                            _q_was_cancelled = True
+                            _was_cancelled = True
                             break
 
-                        event_type = event.get("type", "")
+                        # Get the next queued message
+                        qlist = _ws_queued[session_id]
+                        next_data = qlist.pop(0)
+                        q_msg_id = next_data.get("message_id", "")
+                        q_prompt = next_data.get("message", "").strip()
 
-                        if event_type == "assistant":
-                            content = event.get("content", [])
-                            is_partial = event.get("is_partial", False)
-                            if is_partial:
-                                for block in content:
-                                    if isinstance(block, dict) and block.get("type") == "text":
-                                        full_text = block.get("text", "")
-                                        delta = full_text[len(_q_last_sent_text):]
-                                        if delta:
-                                            await websocket.send_json({
-                                                "type": "text_delta",
-                                                "text": delta,
-                                            })
-                                            _record_tokens(session_id, "主Agent", delta)
-                                        _q_last_sent_text = full_text
-                            else:
-                                _q_last_sent_text = ""
-                                for block in content:
-                                    if isinstance(block, dict) and block.get("type") == "tool_use":
-                                        tool_name = block.get("name", "")
-                                        await websocket.send_json({
-                                            "type": "tool_use",
-                                            "tool_name": tool_name,
-                                            "tool_input": block.get("input", {}),
-                                        })
-                                        if tool_name in ("TaskCreate", "TaskUpdate"):
-                                            _q_task_tools_seen.add(tool_name)
-                                        if tool_name in ("Skill", "SkillManage"):
-                                            _q_skill_tool_seen = True
-                                        # Track agent tools — send immediate status update
-                                        if tool_name in ("Agent", "agent_tool"):
-                                            try:
-                                                current = _get_agent_status_snapshot(session_id)
-                                                _agent_last_status[session_id] = current
+                        if not qlist:
+                            del _ws_queued[session_id]
+
+                        if not q_prompt:
+                            # Still send queue update for remaining messages
+                            await _send_queue_update(websocket, session_id)
+                            continue
+
+                        # Notify frontend that we're processing this specific queued message
+                        await websocket.send_json({
+                            "type": "queued_processing",
+                            "session_id": session_id,
+                            "message_id": q_msg_id,
+                            "message_text": q_prompt,
+                            "remaining": len(qlist),
+                        })
+
+                        # Send updated queue positions for remaining queued messages
+                        await _send_queue_update(websocket, session_id)
+
+                        # Build contextual prompt for queued message
+                        # Simple: just send the original message, the AI handles it naturally
+                        combined_prompt = q_prompt
+
+                        # Track per-queued-message state
+                        _q_last_sent_text = ""
+                        _q_task_tools_seen = set()
+                        _q_skill_tool_seen = False
+                        _q_was_cancelled = False
+
+                        try:
+                            async for event in engine.send_message(combined_prompt):
+                                if cancel_event and cancel_event.is_set():
+                                    _q_was_cancelled = True
+                                    break
+
+                                event_type = event.get("type", "")
+
+                                if event_type == "assistant":
+                                    content = event.get("content", [])
+                                    is_partial = event.get("is_partial", False)
+                                    if is_partial:
+                                        for block in content:
+                                            if isinstance(block, dict) and block.get("type") == "text":
+                                                full_text = block.get("text", "")
+                                                delta = full_text[len(_q_last_sent_text):]
+                                                if delta:
+                                                    await websocket.send_json({
+                                                        "type": "text_delta",
+                                                        "text": delta,
+                                                    })
+                                                    _record_tokens(session_id, "主Agent", delta)
+                                                _q_last_sent_text = full_text
+                                    else:
+                                        _q_last_sent_text = ""
+                                        for block in content:
+                                            if isinstance(block, dict) and block.get("type") == "tool_use":
+                                                tool_name = block.get("name", "")
                                                 await websocket.send_json({
-                                                    "type": "agent_status",
-                                                    "agents": current,
-                                                    "session_id": session_id,
+                                                    "type": "tool_use",
+                                                    "tool_name": tool_name,
+                                                    "tool_input": block.get("input", {}),
                                                 })
-                                            except Exception:
-                                                pass
+                                                if tool_name in ("TaskCreate", "TaskUpdate"):
+                                                    _q_task_tools_seen.add(tool_name)
+                                                if tool_name in ("Skill", "SkillManage"):
+                                                    _q_skill_tool_seen = True
+                                                # Track agent tools — send immediate status update
+                                                if tool_name in ("Agent", "agent_tool"):
+                                                    try:
+                                                        current = _get_agent_status_snapshot(session_id)
+                                                        _agent_last_status[session_id] = current
+                                                        await websocket.send_json({
+                                                            "type": "agent_status",
+                                                            "agents": current,
+                                                            "session_id": session_id,
+                                                        })
+                                                    except Exception:
+                                                        pass
 
-                        elif event_type == "user":
-                            for block in event.get("content", []):
-                                if isinstance(block, dict) and block.get("type") == "tool_result":
-                                    result_text = str(block.get("content", ""))
-                                    if len(result_text) > 1000:
-                                        result_text = result_text[:1000] + "..."
+                                elif event_type == "user":
+                                    for block in event.get("content", []):
+                                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                                            result_text = str(block.get("content", ""))
+                                            if len(result_text) > 1000:
+                                                result_text = result_text[:1000] + "..."
+                                            await websocket.send_json({
+                                                "type": "tool_result",
+                                                "content": result_text,
+                                                "is_error": block.get("is_error", False),
+                                            })
+                                    if _q_task_tools_seen:
+                                        from AutoRUN_v1.tools.task_tool import get_all_tasks_for_display
+                                        tasks = get_all_tasks_for_display(state)
+                                        await websocket.send_json({
+                                            "type": "task_update",
+                                            "tasks": tasks,
+                                        })
+
+                                elif event_type == "error":
                                     await websocket.send_json({
-                                        "type": "tool_result",
-                                        "content": result_text,
-                                        "is_error": block.get("is_error", False),
+                                        "type": "error",
+                                        "error": event.get("error", ""),
                                     })
+                                    break
+
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception as e:
+                            await websocket.send_json({"type": "error", "error": str(e)})
+                            continue
+
+                        # Send per-queued-message completion
+                        if not _q_was_cancelled:
                             if _q_task_tools_seen:
                                 from AutoRUN_v1.tools.task_tool import get_all_tasks_for_display
                                 tasks = get_all_tasks_for_display(state)
@@ -2056,39 +2314,20 @@ async def _handle_chat_message(websocket: WebSocket, data: Dict[str, Any], cance
                                     "type": "task_update",
                                     "tasks": tasks,
                                 })
+                            if _q_skill_tool_seen:
+                                _skill_tool_seen = True
 
-                        elif event_type == "error":
-                            await websocket.send_json({
-                                "type": "error",
-                                "error": event.get("error", ""),
-                            })
-                            break
-
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    await websocket.send_json({"type": "error", "error": str(e)})
-                    break
-
-                # Send per-queued-message completion
-                if not _q_was_cancelled:
-                    if _q_task_tools_seen:
-                        from AutoRUN_v1.tools.task_tool import get_all_tasks_for_display
-                        tasks = get_all_tasks_for_display(state)
                         await websocket.send_json({
-                            "type": "task_update",
-                            "tasks": tasks,
+                            "type": "message_complete",
+                            "session_id": session_id,
+                            "queued_message_id": q_msg_id,
+                            "skill_changed": _q_skill_tool_seen,
+                            "has_more_queued": bool(session_id in _ws_queued and _ws_queued[session_id]),
                         })
-                    if _q_skill_tool_seen:
-                        _skill_tool_seen = True
+                except Exception:
+                    logger.debug("Drain failed", exc_info=True)
 
-                await websocket.send_json({
-                    "type": "message_complete",
-                    "session_id": session_id,
-                    "queued_message_id": q_msg_id,
-                    "skill_changed": _q_skill_tool_seen,
-                    "has_more_queued": bool(session_id in _ws_queued and _ws_queued[session_id]),
-                })
+            await _drain_queued()
 
             # Final message_complete only if there were no queued messages processed
             # (the queued loop already sent message_complete for each one)
@@ -2120,8 +2359,18 @@ async def _handle_chat_message(websocket: WebSocket, data: Dict[str, Any], cance
     except asyncio.CancelledError:
         # Task was cancelled via stop — silently return
         pass
+        # Drain remaining queued messages even on cancellation
+        try:
+            await _drain_queued()
+        except Exception:
+            pass
     except Exception as e:
         await websocket.send_json({"type": "error", "error": str(e)})
+        # Drain remaining queued messages even on error
+        try:
+            await _drain_queued()
+        except Exception:
+            pass
 
     # ── Auto-trigger re-check (also on error/cancel paths) ──
     try:
@@ -2213,11 +2462,12 @@ async def _handle_load_conversation(websocket: WebSocket, data: Dict[str, Any]) 
 async def _handle_agent_user_message(websocket: WebSocket, data: Dict[str, Any], session_id: str) -> None:
     """Handle user sending a message to a specific sub-agent (CC gating agent).
 
-    The message is sent to the specific agent identified by agent_id.
-    If the agent is running, the message is forwarded to it.
-    The gating agent is CC'd so it can coordinate.
+    The message is forwarded to the specific agent via SendMessage mechanism.
+    A notification is queued for the gating agent so it can coordinate.
+    This avoids concurrent websocket writes by routing through the queue.
     """
-    from AutoRUN_v1.tools.agent_tool import _background_tasks
+    from AutoRUN_v1.tools.agent_tool import _background_tasks, get_running_agents
+    from AutoRUN_v1.tools.send_message import store_pending_message
 
     agent_id = data.get("agent_id", "").strip()
     message = data.get("message", "").strip()
@@ -2226,13 +2476,25 @@ async def _handle_agent_user_message(websocket: WebSocket, data: Dict[str, Any],
         await websocket.send_json({"type": "error", "error": "agent_id and message are required"})
         return
 
-    # Find the target agent
+    # Find the target agent (match by agent_id first, then description)
     target_entry = None
-    if session_id in _background_tasks:
-        for entry in _background_tasks[session_id]:
-            eid = entry.get("description", "")
-            if eid == agent_id:
-                target_entry = entry
+    for sid in (session_id, "default"):
+        if sid in _background_tasks:
+            for entry in _background_tasks[sid]:
+                if entry.get("agent_id", "") == agent_id:
+                    target_entry = entry
+                    break
+        if target_entry:
+            break
+    if not target_entry:
+        # Fallback: match by description substring
+        for sid in (session_id, "default"):
+            if sid in _background_tasks:
+                for entry in _background_tasks[sid]:
+                    if agent_id.lower() in entry.get("description", "").lower():
+                        target_entry = entry
+                        break
+            if target_entry:
                 break
 
     if not target_entry:
@@ -2242,35 +2504,32 @@ async def _handle_agent_user_message(websocket: WebSocket, data: Dict[str, Any],
         })
         return
 
-    # Forward message: inject into the agent's conversation
-    # The gating agent (parent conversation) is CC'd by sending a system message
     try:
-        # 1. Send a system notification to the main conversation (CC gating agent)
-        cc_msg = (
-            f"[Agent CC] 用户向子 Agent「{agent_id}」发送了消息:\n"
-            f"> {message}\n\n"
-            f"请考虑这条消息是否需要调整当前的工作方向。"
-        )
-        # Queue as a regular chat in the main session
-        from AutoRUN_v1.query_engine import QueryEngine
-        if session_id in _ws_engines:
-            engine = _ws_engines[session_id]
-            async for event in engine.send_message(cc_msg):
-                event_type = event.get("type", "")
-                if event_type == "assistant":
-                    for block in event.get("content", []):
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            await websocket.send_json({
-                                "type": "text_delta",
-                                "text": block.get("text", ""),
-                            })
-                elif event_type == "error":
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": event.get("error", ""),
-                    })
+        # 1. Store pending message for the sub-agent (via SendMessage mechanism)
+        target_agent_id = target_entry.get("agent_id", agent_id)
+        store_pending_message(session_id, target_agent_id, message)
 
-        # 2. Acknowledge to frontend
+        # 2. Queue a CC notification for the gating agent via the message queue
+        #    (avoids concurrent websocket writes)
+        cc_msg = (
+            f"[Agent CC] 用户向子 Agent「{target_entry.get('description', agent_id)}」"
+            f"发送了消息: {message[:200]}"
+        )
+        if session_id not in _ws_queued:
+            _ws_queued[session_id] = []
+        from uuid import uuid4
+        _ws_queued[session_id].append({
+            "message_id": str(uuid4()),
+            "message": cc_msg,
+            "session_id": session_id,
+            "agentPref": getattr(state, 'agent_pref', True) if state else True,
+        })
+        # Trigger queue processing if no main task is running
+        existing_task = _ws_tasks.get(session_id)
+        if not existing_task or existing_task.done():
+            await _drain_queued()
+
+        # 3. Acknowledge to frontend
         await websocket.send_json({
             "type": "agent_user_message_ack",
             "agent_id": agent_id,
@@ -2363,7 +2622,10 @@ def _record_tokens(session_id: str, source: str, text: str):
 
 def _get_agent_status_snapshot(session_id: str) -> List[Dict[str, Any]]:
     """Get current agent status snapshot for a session."""
-    from AutoRUN_v1.tools.agent_tool import _background_tasks, _background_results
+    from AutoRUN_v1.tools.agent_tool import (
+        _background_tasks, _background_results, _agent_reminders,
+        drain_agent_reminders,
+    )
 
     agents = []
 
@@ -2371,10 +2633,9 @@ def _get_agent_status_snapshot(session_id: str) -> List[Dict[str, Any]]:
     if session_id in _background_tasks:
         for entry in _background_tasks[session_id]:
             t = entry.get("task")
-            desc = entry.get("description", "agent")
             agent_info = {
-                "agent_id": desc,  # Use description as identifier
-                "agent_name": desc,
+                "agent_id": entry.get("agent_id", ""),
+                "agent_name": entry.get("description", "agent"),
                 "agent_type": entry.get("agent_type", "general-purpose"),
                 "description": entry.get("description", ""),
                 "status": "running",
@@ -2392,6 +2653,8 @@ def _get_agent_status_snapshot(session_id: str) -> List[Dict[str, Any]]:
                 desc = result_str[len("[Agent 结果: "):].split("]", 1)[0]
             elif result_str.startswith("[Agent 错误: "):
                 desc = result_str[len("[Agent 错误: "):].split("]", 1)[0]
+            elif result_str.startswith("[Agent 已取消: "):
+                desc = result_str[len("[Agent 已取消: "):].split("]", 1)[0]
             agents.append({
                 "agent_id": desc,
                 "agent_name": desc,
@@ -2401,6 +2664,26 @@ def _get_agent_status_snapshot(session_id: str) -> List[Dict[str, Any]]:
                 "done": True,
                 "cancelled": False,
                 "result_summary": result_str[:500],
+            })
+
+    # Reminders (agent running > 5 min, not completion)
+    if session_id in _agent_reminders:
+        for reminder in _agent_reminders[session_id]:
+            # Parse agent description from reminder
+            desc = "Unknown"
+            import re
+            m = re.search(r"'(.*?)'", reminder)
+            if m:
+                desc = m.group(1)
+            agents.append({
+                "agent_id": desc,
+                "agent_name": desc,
+                "agent_type": "general-purpose",
+                "description": desc,
+                "status": "reminder",
+                "done": False,
+                "cancelled": False,
+                "reminder_text": reminder,
             })
 
     return agents
@@ -2464,12 +2747,12 @@ async def _maybe_auto_trigger_agent_results(websocket: WebSocket, session_id: st
     and auto-trigger gating agent processing if so."""
     from AutoRUN_v1.tools.agent_tool import _background_tasks, _background_results, drain_background_results
 
-    # Prevent duplicate auto-trigger scheduling
-    if _auto_trigger_guard.get(session_id):
-        return
-    _auto_trigger_guard[session_id] = True
+    # Prevent duplicate auto-trigger scheduling with asyncio.Lock
+    if session_id not in _auto_trigger_guard:
+        _auto_trigger_guard[session_id] = asyncio.Lock()
+    lock = _auto_trigger_guard[session_id]
 
-    try:
+    async with lock:
         # Check if main chat is already running
         existing_task = _ws_tasks.get(session_id)
         if existing_task and not existing_task.done():
@@ -2505,8 +2788,6 @@ async def _maybe_auto_trigger_agent_results(websocket: WebSocket, session_id: st
         )
         _ws_tasks[session_id] = task
         logger.debug("AUTO_TRIGGER: session=%s, results=%d", session_id, len(all_results))
-    finally:
-        _auto_trigger_guard.pop(session_id, None)
 
 
 # ── Static Files ────────────────────────────────────────────────────────────
