@@ -2075,6 +2075,8 @@ async def _handle_chat_message(websocket: WebSocket, data: Dict[str, Any], cance
                         desc = result_str[len("[Agent 错误: "):].split("]", 1)[0]
                     elif result_str.startswith("[Agent 已取消: "):
                         desc = result_str[len("[Agent 已取消: "):].split("]", 1)[0]
+                    elif result_str.startswith("[Agent 致命错误:"):
+                        desc = result_str[len("[Agent 致命错误:"):].split("]", 1)[0].lstrip()
                     # 只发送纯结果内容（跳过 [Agent 结果: desc] 头部），且截断到 3000 字符
                     result_parts = result_str.split("\n", 1)
                     result_text = result_parts[1] if len(result_parts) > 1 else result_str
@@ -2094,93 +2096,96 @@ async def _handle_chat_message(websocket: WebSocket, data: Dict[str, Any], cance
             })
             return
 
-        async for event in engine.send_message(prompt):
-            # Check for cancellation
-            if cancel_event and cancel_event.is_set():
-                _was_cancelled = True
-                break
+        _gen = engine.send_message(prompt)
+        try:
+            async for event in _gen:
+                # Check for cancellation
+                if cancel_event and cancel_event.is_set():
+                    _was_cancelled = True
+                    break
 
-            event_type = event.get("type", "")
+                event_type = event.get("type", "")
 
-            if event_type == "assistant":
-                content = event.get("content", [])
-                is_partial = event.get("is_partial", False)
+                if event_type == "assistant":
+                    content = event.get("content", [])
+                    is_partial = event.get("is_partial", False)
 
-                if is_partial:
-                    # Partial events: streaming text deltas for incremental UI display.
-                    # Content carries accumulated text; send only the new portion.
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            full_text = block.get("text", "")
-                            delta = full_text[len(_last_sent_text):]
-                            if delta:
-                                await websocket.send_json({
-                                    "type": "text_delta",
-                                    "text": delta,
-                                })
-                                _record_tokens(session_id, "主Agent", delta)
-                            _last_sent_text = full_text
-                else:
-                    # Complete event: text was already streamed via partial events.
-                    # Only emit tool_use blocks; skip text blocks entirely.
-                    _last_sent_text = ""
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "tool_use":
-                            tool_name = block.get("name", "")
-                            await websocket.send_json({
-                                "type": "tool_use",
-                                "tool_name": tool_name,
-                                "tool_input": block.get("input", {}),
-                            })
-                            # Track task-related tools
-                            if tool_name in ("TaskCreate", "TaskUpdate"):
-                                _task_tools_seen.add(tool_name)
-                            # Track skill-related tools
-                            if tool_name in ("Skill", "SkillManage"):
-                                _skill_tool_seen = True
-                            # Track agent tools — send immediate status update
-                            if tool_name in ("Agent", "agent_tool"):
-                                try:
-                                    current = _get_agent_status_snapshot(session_id)
-                                    _agent_last_status[session_id] = current
+                    if is_partial:
+                        # Partial events: streaming text deltas for incremental UI display.
+                        # Content carries accumulated text; send only the new portion.
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                full_text = block.get("text", "")
+                                delta = full_text[len(_last_sent_text):]
+                                if delta:
                                     await websocket.send_json({
-                                        "type": "agent_status",
-                                        "agents": current,
-                                        "session_id": session_id,
+                                        "type": "text_delta",
+                                        "text": delta,
                                     })
-                                except Exception:
-                                    pass
+                                    _record_tokens(session_id, "主Agent", delta)
+                                _last_sent_text = full_text
+                    else:
+                        # Complete event: text was already streamed via partial events.
+                        # Only emit tool_use blocks; skip text blocks entirely.
+                        _last_sent_text = ""
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "tool_use":
+                                tool_name = block.get("name", "")
+                                await websocket.send_json({
+                                    "type": "tool_use",
+                                    "tool_name": tool_name,
+                                    "tool_input": block.get("input", {}),
+                                })
+                                # Track task-related tools
+                                if tool_name in ("TaskCreate", "TaskUpdate"):
+                                    _task_tools_seen.add(tool_name)
+                                # Track skill-related tools
+                                if tool_name in ("Skill", "SkillManage"):
+                                    _skill_tool_seen = True
+                                # Track agent tools — send immediate status update
+                                if tool_name in ("Agent", "agent_tool"):
+                                    try:
+                                        current = _get_agent_status_snapshot(session_id)
+                                        _agent_last_status[session_id] = current
+                                        await websocket.send_json({
+                                            "type": "agent_status",
+                                            "agents": current,
+                                            "session_id": session_id,
+                                        })
+                                    except Exception:
+                                        pass
 
-            elif event_type == "user":
-                for block in event.get("content", []):
-                    if isinstance(block, dict) and block.get("type") == "tool_result":
-                        result_text = str(block.get("content", ""))
-                        if len(result_text) > 1000:
-                            result_text = result_text[:1000] + "..."
-                        await websocket.send_json({
-                            "type": "tool_result",
-                            "content": result_text,
-                            "is_error": block.get("is_error", False),
-                        })
-                # After tool results processed, update task panel
-                await _maybe_send_task_update()
+                elif event_type == "user":
+                    for block in event.get("content", []):
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            result_text = str(block.get("content", ""))
+                            if len(result_text) > 1000:
+                                result_text = result_text[:1000] + "..."
+                            await websocket.send_json({
+                                "type": "tool_result",
+                                "content": result_text,
+                                "is_error": block.get("is_error", False),
+                            })
+                    # After tool results processed, update task panel
+                    await _maybe_send_task_update()
 
-            elif event_type == "error":
-                await websocket.send_json({
-                    "type": "error",
-                    "error": event.get("error", ""),
-                })
-                break
+                elif event_type == "error":
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": event.get("error", ""),
+                    })
+                    break
 
-            elif event_type == "terminal":
+                elif event_type == "terminal":
+                    pass
+        finally:
+            try:
+                await _gen.aclose()
+            except Exception:
                 pass
 
-        # Send final task update (only if not cancelled)
-        if not _was_cancelled:
-            await _maybe_send_task_update()
-
-            # ── Drain queued messages (extracted as local function) ──────────
-            async def _drain_queued():
+        # ── 定义 drain 函数（始终可用，不受 cancel 影响）──
+        async def _drain_queued():
                 """Process all queued messages. Safe to call even if engine is not ready."""
                 nonlocal _skill_tool_seen, _was_cancelled
                 try:
@@ -2657,22 +2662,34 @@ def _get_agent_status_snapshot(session_id: str) -> List[Dict[str, Any]]:
     # Completed agents (results are strings like "[Agent 结果: {desc}]\n{result}")
     if session_id in _background_results:
         for result_str in _background_results[session_id]:
-            # Parse description from result string
+            # Parse description from result string and determine status
             desc = "Sub-Agent"
+            agent_status = "completed"
+            agent_cancelled = False
             if result_str.startswith("[Agent 结果: "):
                 desc = result_str[len("[Agent 结果: "):].split("]", 1)[0]
+                agent_status = "completed"
+            elif result_str.startswith("[Agent 致命错误:"):
+                desc = result_str[len("[Agent 致命错误:"):].split("]", 1)[0]
+                agent_status = "error"
             elif result_str.startswith("[Agent 错误: "):
                 desc = result_str[len("[Agent 错误: "):].split("]", 1)[0]
+                agent_status = "error"
             elif result_str.startswith("[Agent 已取消: "):
                 desc = result_str[len("[Agent 已取消: "):].split("]", 1)[0]
+                agent_status = "cancelled"
+                agent_cancelled = True
+            elif result_str.startswith("[Agent 中断: "):
+                desc = result_str[len("[Agent 中断: "):].split("]", 1)[0]
+                agent_status = "error"
             agents.append({
                 "agent_id": desc,
                 "agent_name": desc,
                 "agent_type": "general-purpose",
                 "description": desc,
-                "status": "completed",
+                "status": agent_status,
                 "done": True,
-                "cancelled": False,
+                "cancelled": agent_cancelled,
                 "result_summary": result_str[:500],
             })
 

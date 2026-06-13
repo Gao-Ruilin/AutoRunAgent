@@ -200,9 +200,15 @@ def _store_background_task(session_id: Optional[str], description: str, task: as
         # Always store result (even cancelled/error) so gatekeeper can see it
         if not result_str:
             if result:
-                # 清理子Agent 输出中的阶段标签，防止污染门控Agent 上下文
-                cleaned_result = _strip_stage_tags(str(result))
-                result_str = f"[Agent 结果: {description}]\n{cleaned_result}"
+                # 如果子Agent 自己返回了错误标记（如 [Agent 致命错误:]），保留它
+                # 不要用 [Agent 结果:] 包装，确保主Agent 能识别这是错误
+                result_str_raw = str(result)
+                if result_str_raw.startswith("[Agent 致命错误:"):
+                    result_str = result_str_raw
+                else:
+                    # 清理子Agent 输出中的阶段标签，防止污染门控Agent 上下文
+                    cleaned_result = _strip_stage_tags(result_str_raw)
+                    result_str = f"[Agent 结果: {description}]\n{cleaned_result}"
             else:
                 result_str = f"[Agent 结果: {description}]\n(Agent 返回了空结果)"
 
